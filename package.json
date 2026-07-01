@@ -1,0 +1,46 @@
+{
+  "name": "@nerisma/pi-agents",
+  "version": "0.1.0",
+  "description": "Système d'agents spécialisés pour pi : délégation de tâches, activation/désactivation, et injection de system prompt via fichiers .md.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "agents",
+    "delegation",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "author": "Sébastien SERVOUZE <sebastien.servouze@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sebastienservouze/pi-agents.git"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0",
+    "@types/node": "^25.9.1",
+    "typebox": "^1.1.38",
+    "typescript": "^6.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
