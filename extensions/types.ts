@@ -11,7 +11,6 @@ export interface AgentConfig {
   systemPrompt: string;
   source: "user" | "project";
   filePath: string;
-  outputFormat?: "text" | "json" | "markdown";
   /** If true, loads AGENTS.md from the current directory and appends it to the
    * system prompt. Silent if absent. */
   useAgentFile?: boolean;
@@ -62,7 +61,6 @@ export interface AgentResult {
 export interface DelegateParams {
   agent: string;
   task: string;
-  outputFormat?: "text" | "json" | "markdown";
 }
 
 export interface DelegateDetails {
@@ -74,7 +72,6 @@ export interface DelegateDetails {
   errorMessage?: string;
   actions?: string[];
   activeTools?: string[];
-  outputFormat?: string;
   durationMs?: number;
   toolCount?: number;
   toolFailCount?: number;

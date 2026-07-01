@@ -21,16 +21,6 @@ import type { AgentResult, DelegateDetails } from "./types.js";
 const DelegateParams = Type.Object({
   agent: Type.String({ description: "Name of the agent to invoke" }),
   task: Type.String({ description: "Task to delegate, with all necessary context" }),
-  outputFormat: Type.Optional(
-    Type.Union(
-      [
-        Type.Literal("text"),
-        Type.Literal("json"),
-        Type.Literal("markdown"),
-      ],
-      { description: "Expected output format" }
-    )
-  ),
 });
 
 /**
@@ -92,16 +82,11 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
         };
       }
 
-      // Inject the expected output format into the task, if specified
-      const taskWithHint = params.outputFormat
-        ? `${params.task}\n\n[Expected output format: ${params.outputFormat}]`
-        : params.task;
-
       // Run the agent
       const result: AgentResult = await runAgent(
         ctx.cwd,
         agent,
-        taskWithHint,
+        params.task,
         signal,
         onUpdate
           ? (progress) => {
@@ -134,7 +119,6 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
         model: result.model,
         errorMessage: result.errorMessage,
         actions: result.actions,
-        outputFormat: params.outputFormat,
         durationMs: result.durationMs,
         toolCount: result.toolCount,
         toolFailCount: result.toolFailCount,

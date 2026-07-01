@@ -112,12 +112,6 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
       continue;
     }
 
-    const outputFormat = asString(frontmatter.outputFormat) as
-      | "text"
-      | "json"
-      | "markdown"
-      | undefined;
-
     agents.push({
       name,
       description,
@@ -127,7 +121,6 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
       systemPrompt: body.trim(),
       source,
       filePath,
-      outputFormat,
       useAgentFile: asBool(frontmatter.useAgentFile),
     });
   }
