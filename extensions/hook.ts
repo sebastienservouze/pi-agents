@@ -1,33 +1,40 @@
 /**
- * Hooks du système d'agents
+ * Agent system hooks
  *
- * - before_agent_start :
- *   - Sub-agent délégué (PI_DELEGATED_SUBAGENT=1) :
- *       Lit PI_DELEGATED_AGENT_PROMPT_FILE et l'utilise comme system prompt EXCLUSIF.
- *       Garantit : zéro prompt pi par défaut, uniquement le .md de l'agent.
+ * - before_agent_start:
+ *   - Delegated sub-agent (PI_DELEGATED_SUBAGENT=1):
+ *       Reads PI_DELEGATED_AGENT_PROMPT_FILE and uses it as the EXCLUSIVE system
+ *       prompt. Guarantees: no default pi prompt, only the agent's .md.
  *
- *   - Agent actif (mode `/agent <nom>`) :
- *       Remplace le system prompt par celui de l'agent. Inchangé.
+ *   - Active agent (`/agent <name>` mode):
+ *       Replaces the system prompt with the agent's.
  *
- *   - Agent principal (mode normal) :
- *       Injecte un bloc de règles de délégation dans le system prompt,
- *       construit à partir des champs `promptSuggestion` et `whenToDelegate`
- *       du frontmatter de chaque agent.
+ *   - Auto-activation:
+ *       Activates a default agent once per session (system prompt, tools, model,
+ *       thinking level). Opt-in via PI_DEFAULT_AGENT.
+ *
+ *   - Main agent (normal mode):
+ *       No modification — pi handles APPEND_SYSTEM.md.
+ *
+ * - before_provider_request:
+ *       Enforces the active agent's tool allow-list on the payload. The MCP
+ *       bridge (context-mode) injects its whole ctx_* family on top of the
+ *       frontmatter; here, at the last moment before sending, we keep only the
+ *       tools declared in `tools:`. Fail-open.
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { findAgent, discoverAgents } from "./registry.js";
-import type { AgentConfig, ActiveAgentState } from "./types.js";
+import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
+import type { ActiveAgentState } from "./types.js";
 
-// ─── useAgentFile : chargement du fichier AGENTS.md / CLAUDE.md du cwd ────────
+// ─── useAgentFile: loading the cwd's AGENTS.md file ──────────────────────────
 
 /**
- * Cherche AGENTS.md (ou CLAUDE.md) dans `cwd`.
- * Retourne le contenu formaté en balises <project_context> (même format que pi),
- * ou null si aucun fichier trouvé ou lecture impossible.
+ * Looks for AGENTS.md in `cwd`.
+ * Returns the content wrapped in <project_context> tags (same format as pi),
+ * or null if no file is found or it cannot be read.
  */
 function loadAgentFileFromCwd(cwd: string): string | null {
   const filePath = path.join(cwd, "AGENTS.md");
@@ -44,47 +51,11 @@ function loadAgentFileFromCwd(cwd: string): string | null {
   }
 }
 
-// ─── Debug : log du dernier system prompt ───────────────────────────────────
-
-const DEBUG_PROMPT_FILE = path.join(os.homedir(), ".pi", "agent", "last_system_prompt");
+// ─── Reading the `tools` array from the provider payload ─────────────────────
 
 /**
- * Rend les outils ACTIFS tels qu'ils sont empaquetés dans le champ `tools`
- * de la requête provider (donc HORS du system prompt visible ci-dessus).
- * Sert à voir/mesurer le vrai coût en tokens des schémas d'outils.
- *
- * `allow` (optionnel) = allow-list du frontmatter de l'agent actif. Si fournie,
- * on n'affiche QUE les outils réellement envoyés (actifs ∩ allow), pour ne pas
- * mentir avec les `ctx_*` que le bridge MCP a injectés dans l'ensemble actif.
- */
-function renderInjectedTools(pi: ExtensionAPI, allow?: Set<string>): string {
-  try {
-    const active = new Set(pi.getActiveTools());
-    const tools = pi
-      .getAllTools()
-      .filter((t) => active.has(t.name) && (!allow || allow.has(t.name)));
-    if (tools.length === 0) return "";
-    // name + description + JSON Schema des paramètres = ce qui devient des tokens.
-    const serialized = tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
-    const json = JSON.stringify(serialized, null, 2);
-    return (
-      `\n\n# ===== OUTILS INJECTÉS VIA L'API (${tools.length} outils, ${json.length} chars) =====\n` +
-      `# Absents du system prompt ci-dessus : transmis séparément dans le champ \`tools\` de la requête provider.\n` +
-      `# Rendu représentatif (name + description + JSON Schema des paramètres).\n\n` +
-      json
-    );
-  } catch (e) {
-    return `\n\n# (rendu des outils impossible : ${e instanceof Error ? e.message : String(e)})`;
-  }
-}
-
-/**
- * Cherche le tableau `tools` dans le payload provider (forme `unknown`,
- * spécifique au provider). On tente les emplacements courants.
+ * Looks for the `tools` array in the provider payload (shape is `unknown`,
+ * provider-specific). We try the common locations.
  */
 function findToolsArray(payload: unknown): unknown[] | null {
   if (!payload || typeof payload !== "object") return null;
@@ -96,76 +67,14 @@ function findToolsArray(payload: unknown): unknown[] | null {
   return null;
 }
 
-/** Nom d'une entrée d'outil, quel que soit le format wire (OpenAI/Anthropic/pi). */
+/** Name of a tool entry, whatever the wire format (OpenAI/Anthropic/pi). */
 function toolName(t: unknown): string | undefined {
   if (!t || typeof t !== "object") return undefined;
   const o = t as { name?: string; function?: { name?: string } };
   return o.name ?? o.function?.name;
 }
 
-/**
- * Rend les outils RÉELLEMENT envoyés, lus dans le payload (wire truth).
- * À défaut de tableau `tools` trouvé : diagnostic des clés + fallback registry.
- */
-function renderPayloadTools(payload: unknown, pi: ExtensionAPI, allow?: Set<string>): string {
-  const tools = findToolsArray(payload);
-  if (!tools) {
-    const keys =
-      payload && typeof payload === "object"
-        ? Object.keys(payload as Record<string, unknown>).join(", ")
-        : typeof payload;
-    return `\n\n# (payload.tools introuvable — clés du payload : ${keys})` + renderInjectedTools(pi, allow);
-  }
-  const json = JSON.stringify(tools, null, 2);
-  return (
-    `\n\n# ===== OUTILS RÉELLEMENT ENVOYÉS (payload : ${tools.length} outils, ${json.length} chars) =====\n` +
-    `# Lu directement dans le payload de la requête provider — c'est ce qui part sur le réseau.\n\n` +
-    json
-  );
-}
-
-// Dernier system prompt capturé à before_agent_start, réutilisé pour réécrire
-// le fichier avec la liste d'outils COMPLÈTE au moment de la requête provider.
-// (Les outils MCP ctx_* sont enregistrés en async, APRÈS before_agent_start :
-// les lire trop tôt n'en montre qu'une partie.)
-let lastPrompt = "";
-let lastLabel = "";
-
-// ─── Debug : compteur d'outils transmis, par tour ────────────────────────────
-// Rempli à CHAQUE before_provider_request (vérité réseau, APRÈS filtrage du
-// garde), lu puis remis à zéro à turn_end pour une notification de debug.
-// Un tour = plusieurs requêtes provider (boucle tool-use) : on garde donc une
-// entrée par requête pour exposer une éventuelle asymétrie 1er vs Ne appel
-// (les ctx_* du bridge MCP arrivent en async, cf. commentaires ci-dessus).
-interface TurnToolSample {
-  sent: number;   // outils réellement dans le payload (après filtrage)
-  active: number; // pi.getActiveTools() au moment de la requête (ensemble « pollué »)
-}
-let turnToolSamples: TurnToolSample[] = [];
-
-function writeLastSystemPrompt(prompt: string, label: string, toolsBlock = ""): void {
-  lastPrompt = prompt;
-  lastLabel = label;
-  try {
-    const header = `# ${label} — ${new Date().toISOString()}\n# system prompt: ${prompt.length} chars\n\n`;
-    fs.writeFileSync(DEBUG_PROMPT_FILE, header + prompt + toolsBlock, "utf-8");
-  } catch {
-    // silencieux
-  }
-}
-
-// ─── Construction du bloc de délégation ──────────────────────────────────────
-
-/**
- * DEPRECATED : cette fonction n'est plus utilisée.
- * Les règles de délégation sont désormais dans APPEND_SYSTEM.md
- * (injecté automatiquement par PI pour l'agent principal).
- */
-// function buildAgentGuidelines(agents: AgentConfig[]): string {
-//   DEPRECATED — voir APPEND_SYSTEM.md
-// }
-
-// ─── Enregistrement ─────────────────────────────────────────────────────────
+// ─── Registration ────────────────────────────────────────────────────────────
 
 export function registerHooks(
   pi: ExtensionAPI,
@@ -175,39 +84,43 @@ export function registerHooks(
     setActiveAgentState?: (s: ActiveAgentState | null) => void;
   },
 ): void {
+  // Auto-activation runs at most once per session. Set on the first attempt
+  // (even if the agent is missing) so it never re-fires — and so a later
+  // `/agent off` is respected instead of being undone next turn.
+  let autoActivationAttempted = false;
+
+  // The tool guard fails open. If it ever can't locate the payload's tools
+  // array while an allow-list is active, the allow-list is NOT enforced — warn
+  // once so a silent bypass doesn't go unnoticed.
+  let warnedGuardBypass = false;
+
   pi.on("before_agent_start", async (event, ctx) => {
     const activeAgentName = getActiveAgentName();
     const isDelegatedSubAgent = process.env.PI_DELEGATED_SUBAGENT === "1";
-    const toolsBlock = renderInjectedTools(pi);
 
-    // ── Sub-agent délégué ──
-    // Utiliser UNIQUEMENT le contenu du fichier prompt transmis par le runner.
-    // Garantit : pas de prompt pi par défaut, pas de stacking parent/enfant.
+    // ── Delegated sub-agent ──
+    // Use ONLY the prompt file passed by the runner.
+    // Guarantees: no default pi prompt, no parent/child stacking.
     if (isDelegatedSubAgent) {
       const promptFile = process.env.PI_DELEGATED_AGENT_PROMPT_FILE;
       if (promptFile) {
         try {
           const content = fs.readFileSync(promptFile, "utf-8");
-          writeLastSystemPrompt(content, `sub-agent (${process.env.PI_DELEGATED_SUBAGENT_NAME || "?"})`, toolsBlock);
           return { systemPrompt: content };
         } catch {
-          // Fichier inaccessible : fallback sans modification
+          // File unreadable: fall back without modification
         }
       }
-      writeLastSystemPrompt(event.systemPrompt, "sub-agent (fallback)", toolsBlock);
       return;
     }
 
-    // ── Agent actif via /agent <nom> ──
-    // Remplacement complet du system prompt par celui de l'agent.
+    // ── Active agent via /agent <name> ──
+    // Full replacement of the system prompt with the agent's.
     if (activeAgentName) {
       const agent = findAgent(ctx.cwd, activeAgentName);
       if (!agent?.systemPrompt) {
-        writeLastSystemPrompt(event.systemPrompt, `agent "${activeAgentName}" (pas de systemPrompt)`, toolsBlock);
         return;
       }
-      const agentAllow = agent.tools?.length ? new Set(agent.tools) : undefined;
-      writeLastSystemPrompt(agent.systemPrompt, `agent "${activeAgentName}"`, renderInjectedTools(pi, agentAllow));
       const finalPrompt =
         agent.useAgentFile
           ? agent.systemPrompt + (loadAgentFileFromCwd(ctx.cwd) ?? "")
@@ -215,23 +128,28 @@ export function registerHooks(
       return { systemPrompt: finalPrompt };
     }
 
-    // ── Auto-activation (agent principal, mais un agent est configuré) ──
+    // ── Auto-activation (main agent, a default agent is configured) ──
     const { autoActivateAgentName, setActiveAgentState } = options ?? {};
-    if (autoActivateAgentName) {
+    if (autoActivateAgentName && !autoActivationAttempted) {
+      autoActivationAttempted = true;
       const agent = findAgent(ctx.cwd, autoActivateAgentName);
       if (agent?.systemPrompt) {
-        // Appliquer les outils de l'agent
-        const toolsToSet = agent.tools?.length
-          ? agent.tools
-          : ["read", "grep", "find", "ls", "bash", "ask_user_question"];
+        // Capture the ORIGINAL state before mutating anything, so `/agent off`
+        // can restore the true defaults rather than the agent's own settings.
+        const savedTools = pi.getActiveTools();
+        const savedModelId = ctx.model?.id;
+        const savedThinkingLevel = pi.getThinkingLevel();
+
+        // Apply the agent's tools
+        const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
         try { pi.setActiveTools(toolsToSet); } catch { /* fail open */ }
 
-        // Appliquer le thinking level
+        // Apply the thinking level
         if (agent.thinkingLevel) {
           try { pi.setThinkingLevel(agent.thinkingLevel as any); } catch { /* fail open */ }
         }
 
-        // Appliquer le modèle
+        // Apply the model
         if (agent.model) {
           try {
             const slashIdx = agent.model.indexOf("/");
@@ -242,21 +160,20 @@ export function registerHooks(
           } catch { /* fail open */ }
         }
 
-        // Mettre à jour l'état global pour que before_provider_request filtre les outils
+        // Record the original state so before_provider_request filters tools and
+        // `/agent off` restores the defaults.
         if (setActiveAgentState) {
           setActiveAgentState({
             name: agent.name,
-            savedTools: pi.getActiveTools(),
-            savedModelId: ctx.model?.id,
-            savedThinkingLevel: pi.getThinkingLevel(),
+            savedTools,
+            savedModelId,
+            savedThinkingLevel,
           });
         }
         process.env.PI_ACTIVE_AGENT = agent.name;
         try { ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`)); } catch {}
-        try { ctx.ui.notify(`Agent "${agent.name}" activé automatiquement`, "info"); } catch {}
+        try { ctx.ui.notify(`Agent "${agent.name}" activated automatically`, "info"); } catch {}
 
-        const autoAllow = agent.tools?.length ? new Set(agent.tools) : undefined;
-        writeLastSystemPrompt(agent.systemPrompt, `auto: "${autoActivateAgentName}"`, renderInjectedTools(pi, autoAllow));
         const finalPromptAuto =
           agent.useAgentFile
             ? agent.systemPrompt + (loadAgentFileFromCwd(ctx.cwd) ?? "")
@@ -265,20 +182,18 @@ export function registerHooks(
       }
     }
 
-    // ── Agent principal (pas d'auto-activation) ──
-    // APPEND_SYSTEM.md est injecté automatiquement par PI
-    writeLastSystemPrompt(event.systemPrompt, "principal", toolsBlock);
-    return; // Pas de modification — PI gère APPEND_SYSTEM.md
+    // ── Main agent (no auto-activation) ──
+    // pi injects APPEND_SYSTEM.md automatically — no modification.
+    return;
   });
 
-  // Au moment de la requête provider, le bridge MCP a fini d'enregistrer les
-  // outils ctx_* : on réécrit le fichier avec la liste COMPLÈTE (race-free).
-  // On ne touche pas au payload (retour void = payload inchangé).
+  // At provider-request time, enforce the active agent's allow-list on the
+  // payload tools. Nothing else is touched (returning the payload, mutated in
+  // place, sends it as-is).
   pi.on("before_provider_request", (event, ctx) => {
     const payload = event.payload;
 
-    // Allow-list du frontmatter de l'agent actif : source de vérité partagée
-    // par le filtrage du payload ET le rendu debug (renderPayloadTools).
+    // Active agent's frontmatter allow-list.
     let allowSet: Set<string> | undefined;
     try {
       const agentName = getActiveAgentName();
@@ -287,79 +202,42 @@ export function registerHooks(
         if (allow?.length) allowSet = new Set(allow);
       }
     } catch {
-      // fail-open : pas d'allow-list → pas de filtrage
+      // fail-open: no allow-list → no filtering
     }
 
-    // Enforce l'allow-list de l'agent actif sur les outils du payload.
-    // Le bridge MCP (context-mode) injecte TOUTE sa famille ctx_* par-dessus le
-    // frontmatter ; ici, au moment de l'envoi, on remet l'allow-list : on garde
-    // uniquement les outils dont le name est déclaré dans `tools:`. Fail-open.
+    // Enforce the active agent's allow-list on the payload tools: keep only the
+    // tools whose name is declared in `tools:`. Fail-open.
     try {
       const tools = findToolsArray(payload);
+
+      // Allow-list active but the tools array couldn't be located: the guard
+      // can't enforce anything and every tool goes through. Surface it once.
+      if (allowSet && !tools && !warnedGuardBypass) {
+        warnedGuardBypass = true;
+        try {
+          ctx.ui?.notify?.(
+            `Tool guard inactive: "tools" array not found in payload — agent's allow-list is NOT applied.`,
+            "warning",
+          );
+        } catch { /* no UI available in this context */ }
+      }
+
       if (allowSet && tools) {
         const kept = tools.filter((t) => {
           const n = toolName(t);
-          return n === undefined || allowSet!.has(n); // garde si nom indétectable
+          // Fail-open on undetectable names: keep the tool rather than risk
+          // stripping a legitimate one whose wire format we don't recognize.
+          return n === undefined || allowSet!.has(n);
         });
         if (kept.length !== tools.length) {
-          tools.length = 0; // mutation en place (même référence dans le payload)
+          tools.length = 0; // in-place mutation (same reference held by the payload)
           tools.push(...kept);
         }
       }
     } catch {
-      // fail-open : payload inchangé
+      // fail-open: payload unchanged
     }
 
-    // Échantillon debug : nombre d'outils réellement transmis (après filtrage)
-    // vs nombre d'outils actifs. Relu à turn_end pour la notification.
-    try {
-      const finalTools = findToolsArray(payload);
-      let active = 0;
-      try { active = pi.getActiveTools().length; } catch { /* fail open */ }
-      if (finalTools) turnToolSamples.push({ sent: finalTools.length, active });
-    } catch {
-      // fail-open : pas d'échantillon
-    }
-
-    // Trace après filtrage = ce qui part réellement sur le réseau.
-    if (lastPrompt) writeLastSystemPrompt(lastPrompt, lastLabel, renderPayloadTools(payload, pi, allowSet));
     return payload;
-  });
-
-  // ─── Notification debug : outils transmis à l'API, par tour ────────────────
-  // Affiche le nombre d'outils réellement présents dans le payload (vérité
-  // réseau). Format : `> tools 18` ; `18 (28 actifs)` si le garde en a stripé ;
-  // `8→18` si le compte a varié entre les requêtes du tour (× N req).
-  pi.on("turn_end", async (event, ctx) => {
-    const samples = turnToolSamples;
-    turnToolSamples = [];
-    if (samples.length === 0) return;
-
-    const sent = samples.map((s) => s.sent);
-    const active = samples.map((s) => s.active);
-    const sMin = Math.min(...sent), sMax = Math.max(...sent);
-    const aMax = Math.max(...active);
-
-    const sentLabel = sMin === sMax ? `${sMax}` : `${sMin}→${sMax}`;
-
-    try {
-      const thm = ctx.ui.theme;
-      const accentAnsi = thm.getFgAnsi("accent");
-      const mutedAnsi = thm.getFgAnsi("muted");
-      const dimAnsi = thm.getFgAnsi("dim");
-      const reset = "\x1b[39m";
-      const muted = (s: string) => `${mutedAnsi}${s}${reset}`;
-
-      const segments: string[] = [muted(`tools ${sentLabel}`)];
-      // Écart envoyé/actif = ce que le garde a retiré du payload.
-      if (aMax > sMax) segments.push(muted(`${aMax} actifs`));
-      // Plusieurs requêtes dans le tour : utile pour lire l'asymétrie 1er/Ne.
-      if (samples.length > 1) segments.push(muted(`×${samples.length} req`));
-
-      const body = segments.join(` ${dimAnsi}·${reset} `);
-      ctx.ui.notify(`${accentAnsi}>${reset} ${body}`, "info");
-    } catch {
-      // fail-open : pas de notification
-    }
   });
 }

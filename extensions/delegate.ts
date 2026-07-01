@@ -1,26 +1,26 @@
 /**
- * Outil `delegate` — délègue une tâche à un agent spécialisé
+ * `delegate` tool — delegates a task to a specialized agent
  *
- * Point d'entrée unique pour l'orchestration :
- *   - explorer (exploration codebase)
- *   - researcher (recherche web/doc)
- *   - planner (plan technique)
- *   - worker (exécution)
+ * Single entry point for orchestration:
+ *   - explorer (codebase exploration)
+ *   - researcher (web/doc research)
+ *   - planner (technical plan)
+ *   - worker (execution)
  *
- * Chaque agent tourne dans un processus pi --mode json séparé.
- * Le résultat inclut les métriques de consommation (tokens, coût).
+ * Each agent runs in a separate `pi --mode json` process.
+ * The result includes consumption metrics (tokens, cost).
  */
 
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "./registry.js";
-import { runAgent, formatDuration } from "./runner.js";
+import { runAgent, formatDuration, formatTokens } from "./runner.js";
 import type { AgentResult, DelegateDetails } from "./types.js";
 
 const DelegateParams = Type.Object({
-  agent: Type.String({ description: "Nom de l'agent à invoquer" }),
-  task: Type.String({ description: "Tâche à déléguer, avec tout le contexte nécessaire" }),
+  agent: Type.String({ description: "Name of the agent to invoke" }),
+  task: Type.String({ description: "Task to delegate, with all necessary context" }),
   outputFormat: Type.Optional(
     Type.Union(
       [
@@ -28,17 +28,17 @@ const DelegateParams = Type.Object({
         Type.Literal("json"),
         Type.Literal("markdown"),
       ],
-      { description: "Format de sortie attendu" }
+      { description: "Expected output format" }
     )
   ),
 });
 
 /**
- * Construit les promptGuidelines dynamiquement basées sur les agents découverts
+ * Builds promptGuidelines dynamically from the discovered agents.
  */
 function buildPromptGuidelines(agents: ReturnType<typeof discoverAgents>): string[] {
   const guidelines: string[] = [
-    "Utilise delegate pour déléguer à des agents spécialisés. Décris le CONCEPT ou la TÂCHE à résoudre.",
+    "Use delegate to hand off to specialized agents. Describe the CONCEPT or TASK to solve.",
   ];
   
   for (const agent of agents) {
@@ -55,71 +55,71 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
     name: "delegate",
     label: "Delegate",
     description: [
-      "Délègue une tâche à un agent spécialisé qui travaille en contexte isolé.",
-      "L'agent reçoit la tâche, travaille de façon autonome, et renvoie son résultat.",
-      "Utilise pour décomposer une demande complexe en sous-tâches spécialisées.",
+      "Delegates a task to a specialized agent working in an isolated context.",
+      "The agent receives the task, works autonomously, and returns its result.",
+      "Use to break down complex requests into specialized sub-tasks.",
     ].join(" "),
-    promptSnippet: "Délègue une tâche à un agent spécialisé qui travaille en contexte isolé et retourne un résumé ciblé",
+    promptSnippet: "Delegate a task to a specialized agent that works in isolation and returns a targeted summary",
     promptGuidelines: (() => cachedGuidelines || [
-      "Utilise delegate pour déléguer à des agents spécialisés. Décris le CONCEPT ou la TÂCHE à résoudre.",
+      "Use delegate to hand off to specialized agents. Describe the CONCEPT or TASK to solve.",
     ]) as unknown as string[],
     parameters: DelegateParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      // Découvrir les agents et mettre en cache les guidelines au premier appel
+      // Discover agents and cache the guidelines on the first call
       const agents = discoverAgents(ctx.cwd);
       if (!cachedGuidelines) {
         cachedGuidelines = buildPromptGuidelines(agents);
       }
 
-      // Normaliser la casse : le LLM peut passer "EXPLORER" alors que le
-      // frontmatter déclare name: explorer. On cherche en case-insensitive
-      // puis on utilise le nom canonique du frontmatter.
+      // Normalize case: the LLM may pass "EXPLORER" while the frontmatter
+      // declares name: explorer. Match case-insensitively, then use the
+      // canonical name from the frontmatter.
       const needle = params.agent.toLowerCase();
       const agent = agents.find((a) => a.name.toLowerCase() === needle);
 
       if (!agent) {
         const available = agents.map((a) => a.name).join(", ");
         return {
-          content: [{ type: "text", text: `Agent "${params.agent}" inconnu. Agents disponibles : ${available}` }],
+          content: [{ type: "text", text: `Unknown agent "${params.agent}". Available agents: ${available}` }],
           details: {
             agent: params.agent,
             task: params.task,
             exitCode: 1,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
-            errorMessage: `Agent "${params.agent}" inconnu.`,
+            errorMessage: `Unknown agent "${params.agent}".`,
           } as DelegateDetails,
         };
       }
 
-      // Injecter le format attendu dans la tâche si spécifié
+      // Inject the expected output format into the task, if specified
       const taskWithHint = params.outputFormat
-        ? `${params.task}\n\n[Format de sortie attendu : ${params.outputFormat}]`
+        ? `${params.task}\n\n[Expected output format: ${params.outputFormat}]`
         : params.task;
 
-      // Lancer l'agent
+      // Run the agent
       const result: AgentResult = await runAgent(
         ctx.cwd,
         agent,
         taskWithHint,
         signal,
         onUpdate
-          ? (actions, usage, activeTools, durationMs, toolCount, toolFailCount, thinkingPhases, thinkingText) => {
-              const latestAction = actions[actions.length - 1] || "";
+          ? (progress) => {
+              const latestAction = progress.actions[progress.actions.length - 1] || "";
               onUpdate({
                 content: [{ type: "text", text: latestAction }],
                 details: {
                   agent: agent.name,
                   task: params.task,
                   exitCode: 0,
-                  usage,
-                  actions,
-                  activeTools,
-                  durationMs,
-                  toolCount,
-                  toolFailCount,
-                  thinkingPhases,
-                  thinkingText,
+                  usage: progress.usage,
+                  actions: progress.actions,
+                  activeTools: progress.activeTools,
+                  durationMs: progress.durationMs,
+                  toolCount: progress.toolCount,
+                  toolFailCount: progress.toolFailCount,
+                  thinkingPhases: progress.thinkingPhases,
+                  thinkingText: progress.thinkingText,
                 } as DelegateDetails,
               });
             }
@@ -142,18 +142,18 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
         thinkingText: result.thinkingText,
       };
 
-      // ── Erreur ──
+      // ── Error ──
       if (result.exitCode !== 0 || result.errorMessage) {
-        const errMsg = result.errorMessage || result.stderr || result.output || "Erreur inconnue";
+        const errMsg = result.errorMessage || result.stderr || result.output || "Unknown error";
         return {
-          content: [{ type: "text", text: `❌ ${result.agent} a échoué : ${errMsg}` }],
+          content: [{ type: "text", text: `❌ ${result.agent} failed: ${errMsg}` }],
           details,
           isError: true,
         };
       }
 
-      // ── Succès — métriques dans details, pas dans le texte ──
-      const outputText = result.output || "(pas de sortie)";
+      // ── Success — metrics go in details, not in the text ──
+      const outputText = result.output || "(no output)";
 
       return {
         content: [{ type: "text", text: outputText }],
@@ -161,12 +161,12 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
       };
     },
 
-    // ── Rendu TUI ──
+    // ── TUI rendering ──
     renderCall(args, theme, _context) {
       const agentName = args.agent || "...";
       const task = args.task || "...";
 
-      // Mode compact : agent + prompt complet
+      // Compact mode: agent + full prompt
       let text = theme.fg("toolTitle", theme.bold(`delegate → ${agentName}`));
       text += `\n\n${theme.fg("toolOutput", `"${task}"`)}`;
       return new Text(text, 0, 0);
@@ -175,21 +175,21 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
     renderResult(result, { isPartial, expanded }, theme, context) {
       const details = result.details as DelegateDetails | undefined;
       const output = result.content?.[0];
-      const outputText = output?.type === "text" ? output.text : "(pas de sortie)";
+      const outputText = output?.type === "text" ? output.text : "(no output)";
       const isError = context.isError;
 
-      // ── Mise à jour partielle (statut live) ──
+      // ── Partial update (live status) ──
       if (isPartial) {
         const details = result.details as DelegateDetails | undefined;
         const actions = details?.actions ?? [];
 
-        // Filtrer les succès (✅) mais garder les échecs (❌) visibles
+        // Filter out successes (✅) but keep failures (❌) visible
         const filtered = actions.filter(a => !a.startsWith("✅"));
 
-        // Métriques continues : tokens ↑↓, coût, durée
+        // Live metrics: tokens ↑↓, cost, duration
         const metricsLine = buildMetricsLine(details, "  ");
 
-        // Vue expandée live : toutes les actions accumulées + thinking text
+        // Live expanded view: all accumulated actions + thinking text
         if (expanded) {
           const allActions = filtered.length > 0
             ? filtered.map(a => `  ${a}`).join("\n")
@@ -212,7 +212,7 @@ ${theme.fg("dim", metricsLine)}`;
           return new Text(text, 0, 0);
         }
 
-        // Vue compacte live : dernière action uniquement
+        // Live compact view: last action only
         const last = filtered[filtered.length - 1];
         const actionLine = last ?? (result.content?.[0]?.type === "text" ? result.content[0].text : "…");
 
@@ -228,7 +228,7 @@ ${theme.fg("dim", metricsLine)}`;
         ? theme.fg("error", "✗")
         : theme.fg("success", "✓");
 
-      // Vue développée ou compacte (final)
+      // Expanded or compact view (final)
       let text = `
 ${icon} ${theme.fg("toolTitle", theme.bold(details?.agent ?? "?"))}`;
       if (expanded) {
@@ -240,7 +240,7 @@ ${icon} ${theme.fg("toolTitle", theme.bold(details?.agent ?? "?"))}`;
           text += `\n\n${theme.fg("dim", `🧠 ${truncatedThinking}`)}`;
         }
       } else {
-        text += `\n\n${theme.fg("toolOutput", "(Ctrl+O pour voir la réponse complète)")}`;
+        text += `\n\n${theme.fg("toolOutput", "(Ctrl+O to see full response)")}`;
       }
       if (details?.usage) {
         const metricsLine = buildMetricsLine(details, "");
@@ -263,9 +263,4 @@ function buildMetricsLine(details: DelegateDetails | undefined, prefix: string):
   if (details.thinkingPhases) parts.push(`🧠 ${details.thinkingPhases}`);
   if (details.durationMs) parts.push(formatDuration(details.durationMs));
   return parts.length ? prefix + parts.join(" • ") : "";
-}
-
-function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  return `${(n / 1000).toFixed(1)}k`;
 }

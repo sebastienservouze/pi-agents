@@ -1,22 +1,23 @@
 /**
- * Commande `/agent` — activation/désactivation/sélection interactive des agents
+ * `/agent` command — activate/deactivate/interactive selection of agents
  *
- * Usage :
- *   /agent           → sélecteur interactif (SelectList)
- *   /agent <nom>     → active un agent directement
- *   /agent off       → désactive le mode agent actif
+ * Usage:
+ *   /agent           → interactive selector (SelectList)
+ *   /agent <name>    → activate an agent directly
+ *   /agent off       → deactivate the active agent mode
  *
- * Exporte showAgentSelector() pour le raccourci Ctrl+A.
+ * Exports showAgentSelector() for the Alt+A shortcut.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Container, type SelectItem, type AutocompleteItem, SelectList, Text } from "@earendil-works/pi-tui";
-import { discoverAgents } from "./registry.js";
+import { discoverAgents, DEFAULT_AGENT_TOOLS } from "./registry.js";
+import { getDefaultAgentName, setDefaultAgentName } from "./config.js";
 import type { ActiveAgentState } from "./types.js";
 
-// ── Activation d'un agent ──
+// ── Activate an agent ──
 export async function activateAgent(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -27,12 +28,12 @@ export async function activateAgent(
   const agents = discoverAgents(ctx.cwd);
   const agent = agents.find((a) => a.name === agentName);
   if (!agent) {
-    ctx.ui.notify(`Agent "${agentName}" introuvable`, "error");
+    ctx.ui.notify(`Agent "${agentName}" not found`, "error");
     return;
   }
 
   const state = getState();
-  // Sauvegarder l'état par défaut au premier switch
+  // Save the default state on the first switch
   const currentState = state ?? {
     name: agent.name,
     savedTools: pi.getActiveTools(),
@@ -40,20 +41,18 @@ export async function activateAgent(
     savedThinkingLevel: pi.getThinkingLevel(),
   };
 
-  // Appliquer les outils
-  const toolsToSet = agent.tools?.length
-    ? agent.tools
-    : ["read", "grep", "find", "ls", "bash", "ask_user_question"];
+  // Apply the tools
+  const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
   pi.setActiveTools(toolsToSet);
 
-  // Appliquer le thinking level (si spécifié)
+  // Apply the thinking level (if specified)
   if (agent.thinkingLevel) {
     pi.setThinkingLevel(agent.thinkingLevel as ThinkingLevel);
   }
 
-  // Appliquer le modèle (si spécifié)
+  // Apply the model (if specified)
   if (agent.model) {
-    // Supporte les deux formats : "provider/model" (composite) et "model" (ID seul)
+    // Supports both formats: "provider/model" (composite) and "model" (id only)
     const slashIdx = agent.model.indexOf("/");
     const model = slashIdx !== -1
       ? ctx.modelRegistry.find(agent.model.slice(0, slashIdx), agent.model.slice(slashIdx + 1))
@@ -63,13 +62,13 @@ export async function activateAgent(
       const success = await pi.setModel(model);
       if (!success) {
         ctx.ui.notify(
-          `Agent "${agent.name}" : modèle "${agent.model}" sans clé API configurée`,
+          `Agent "${agent.name}": model "${agent.model}" without configured API key`,
           "warning",
         );
       }
     } else {
       ctx.ui.notify(
-        `Agent "${agent.name}" : modèle "${agent.model}" introuvable`,
+        `Agent "${agent.name}": model "${agent.model}" not found`,
         "warning",
       );
     }
@@ -78,10 +77,10 @@ export async function activateAgent(
   setState({ ...currentState, name: agent.name });
   process.env.PI_ACTIVE_AGENT = agent.name;
   ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`));
-  ctx.ui.notify(`Agent "${agent.name}" activé`, "info");
+  ctx.ui.notify(`Agent "${agent.name}" activated`, "info");
 }
 
-// ── Désactivation de l'agent courant ──
+// ── Deactivate the current agent ──
 async function deactivateAgent(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -90,7 +89,7 @@ async function deactivateAgent(
 ): Promise<void> {
   const state = getState();
   if (!state) {
-    ctx.ui.notify("Aucun agent actif", "info");
+    ctx.ui.notify("No active agent", "info");
     return;
   }
 
@@ -106,10 +105,10 @@ async function deactivateAgent(
   setState(null);
   delete process.env.PI_ACTIVE_AGENT;
   ctx.ui.setStatus("agent", undefined);
-  ctx.ui.notify("Agent désactivé — outils, modèle et thinking level restaurés", "info");
+  ctx.ui.notify("Agent deactivated — tools, model and thinking level restored", "info");
 }
 
-// ── Sélecteur interactif ──
+// ── Interactive selector ──
 export async function showAgentSelector(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -118,26 +117,26 @@ export async function showAgentSelector(
 ): Promise<void> {
   const agents = discoverAgents(ctx.cwd);
   if (agents.length === 0) {
-    ctx.ui.notify("Aucun agent trouvé dans .pi/agents/*.md ou ~/.pi/agent/agents/*.md", "warning");
+    ctx.ui.notify("No agents found in .pi/agents/*.md or ~/.pi/agent/agents/*.md", "warning");
     return;
   }
 
   const state = getState();
   const items: SelectItem[] = [];
 
-  // Option "Désactiver" si un agent est actif
+  // "Deactivate" option if an agent is active
   if (state) {
     items.push({
       value: "off",
-      label: `Désactiver (${state.name})`,
-      description: "Restaurer les outils, le modèle et le thinking level par défaut",
+      label: `Deactivate (${state.name})`,
+      description: "Restore default tools, model and thinking level",
     });
   }
 
   for (const a of agents) {
     const isActive = a.name === state?.name;
     const label = isActive ? `${a.name}  ●` : a.name;
-    const modelInfo = a.model ? `Modèle: ${a.model}` : "";
+    const modelInfo = a.model ? `Model: ${a.model}` : "";
     items.push({
       value: a.name,
       label,
@@ -150,7 +149,7 @@ export async function showAgentSelector(
 
     container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
     container.addChild(
-      new Text(theme.fg("accent", theme.bold("Sélectionner un agent")), 1, 0),
+      new Text(theme.fg("accent", theme.bold("Select an agent")), 1, 0),
     );
 
     const selectList = new SelectList(items, Math.min(items.length + 2, 12), {
@@ -165,7 +164,7 @@ export async function showAgentSelector(
     container.addChild(selectList);
 
     container.addChild(
-      new Text(theme.fg("dim", "↑↓ naviguer  ·  entrer sélectionner  ·  esc annuler"), 1, 0),
+      new Text(theme.fg("dim", "↑↓ navigate  ·  enter select  ·  esc cancel"), 1, 0),
     );
     container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
@@ -179,13 +178,13 @@ export async function showAgentSelector(
     };
   });
 
-  // Fallback RPC : ctx.ui.custom() retourne undefined (non supporté) → utiliser ctx.ui.select()
-  // Note: null = annulation utilisateur, on ne fait rien
+  // RPC fallback: ctx.ui.custom() returns undefined (unsupported) → use ctx.ui.select()
+  // Note: null = user cancellation, do nothing
   let choice: string | null | undefined;
   if (result !== undefined) {
     choice = result;
   } else {
-    choice = await ctx.ui.select("Sélectionner un agent", items.map((i) => i.value));
+    choice = await ctx.ui.select("Select an agent", items.map((i) => i.value));
   }
 
   if (choice === "off") {
@@ -195,35 +194,37 @@ export async function showAgentSelector(
   }
 }
 
-// ── Enregistrement de la commande /agent ──
+// ── Registration of the /agent command ──
 export function registerAgentCommand(
   pi: ExtensionAPI,
   getState: () => ActiveAgentState | null,
   setState: (state: ActiveAgentState | null) => void,
 ): void {
   pi.registerCommand("agent", {
-    description: "Active, désactive ou liste les agents. Usage : /agent [nom|off]",
+    description: "Activate, deactivate or list agents. Usage: /agent [name|off]",
     getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      // NOTE: uses process.cwd() because this callback isn't passed a ctx.
+      // If the project cwd differs from the process cwd, completions may be off.
       const agents = discoverAgents(process.cwd());
       const state = getState();
       const items: AutocompleteItem[] = [];
 
-      // Option "off" si un agent est actif
+      // "off" option if an agent is active
       if (state && "off".startsWith(prefix.toLowerCase())) {
         items.push({
           value: "off",
           label: "off",
-          description: `Désactiver (${state.name}) — restaurer outils, modèle et thinking level`,
+          description: `Deactivate (${state.name}) — restore tools, model and thinking level`,
         });
       }
 
       for (const a of agents) {
         if (!a.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
         const isActive = a.name === state?.name;
-        const modelInfo = a.model ? ` — Modèle: ${a.model}` : "";
+        const modelInfo = a.model ? ` — Model: ${a.model}` : "";
         items.push({
           value: a.name,
-          label: isActive ? `${a.name} (actif)` : a.name,
+          label: isActive ? `${a.name} (active)` : a.name,
           description: `${a.description}${modelInfo}`,
         });
       }
@@ -233,35 +234,99 @@ export function registerAgentCommand(
     handler: async (args, ctx) => {
       const input = args?.trim() ?? "";
 
-      // ── Cas 1 : /agent (sans argument) → sélecteur interactif ──
+      // ── Case 1: /agent (no argument) → interactive selector ──
       if (!input) {
         await showAgentSelector(pi, ctx, getState, setState);
         return;
       }
 
-      // ── Cas 2 : /agent off → désactiver ──
+      // ── Case 2: /agent off → deactivate ──
       if (input === "off") {
         await deactivateAgent(pi, ctx, getState, setState);
         return;
       }
 
-      // ── Cas 3 : /agent <nom> → activer directement ──
+      // ── Case 3: /agent <name> → activate directly ──
       await activateAgent(pi, ctx, input, getState, setState);
     },
   });
 
-  // ── Commande /agent-list : retourne la liste des agents (pour UI dropdown) ──
+  // ── /agent-default command: set the agent auto-activated at startup ──
+  // Persisted to <agent dir>/config.json, so it survives pi restarts.
+  pi.registerCommand("agent-default", {
+    description: "Sets the agent activated at pi startup (persistent). Usage: /agent-default [name|off]",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const agents = discoverAgents(process.cwd());
+      const current = getDefaultAgentName();
+      const items: AutocompleteItem[] = [];
+
+      // "off" option if a default is currently set
+      if (current && "off".startsWith(prefix.toLowerCase())) {
+        items.push({
+          value: "off",
+          label: "off",
+          description: `Remove default agent (${current})`,
+        });
+      }
+
+      for (const a of agents) {
+        if (!a.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+        const isDefault = a.name === current;
+        items.push({
+          value: a.name,
+          label: isDefault ? `${a.name} (default)` : a.name,
+          description: a.description,
+        });
+      }
+
+      return items.length > 0 ? items : null;
+    },
+    handler: async (args, ctx) => {
+      const input = args?.trim() ?? "";
+
+      // ── No argument → show the current default ──
+      if (!input) {
+        const current = getDefaultAgentName();
+        ctx.ui.notify(
+          current ? `Default agent: ${current}` : "No default agent",
+          "info",
+        );
+        return;
+      }
+
+      // ── /agent-default off → clear the default ──
+      if (input === "off") {
+        setDefaultAgentName(undefined);
+        ctx.ui.notify("Default agent removed", "info");
+        return;
+      }
+
+      // ── /agent-default <name> → persist it (applies at next pi start) ──
+      const agent = discoverAgents(ctx.cwd).find((a) => a.name === input);
+      if (!agent) {
+        ctx.ui.notify(`Agent "${input}" not found`, "error");
+        return;
+      }
+      setDefaultAgentName(agent.name);
+      ctx.ui.notify(
+        `Default agent: ${agent.name} — active at next pi start (or /agent ${agent.name} to activate now)`,
+        "info",
+      );
+    },
+  });
+
+  // ── /agent-list command: returns the list of agents (for a UI dropdown) ──
   pi.registerCommand("agent-list", {
-    description: "Liste les agents disponibles",
+    description: "List available agents",
     handler: async (_args, ctx) => {
       const agents = discoverAgents(ctx.cwd);
       if (agents.length === 0) {
-        ctx.ui.notify("Aucun agent trouvé", "warning");
+        ctx.ui.notify("No agents found", "warning");
         return;
       }
       const agentNames = agents.map((a) => a.name);
-      await ctx.ui.select("Agents disponibles", agentNames);
-      // Ne rien faire après la sélection — le frontend envoie /agent <nom> séparément
+      await ctx.ui.select("Available agents", agentNames);
+      // Do nothing after selection — the frontend sends /agent <name> separately
     },
   });
 }

@@ -1,7 +1,7 @@
 {
   "name": "@nerisma/pi-agents",
   "version": "0.1.0",
-  "description": "Système d'agents spécialisés pour pi : délégation de tâches, activation/désactivation, et injection de system prompt via fichiers .md.",
+  "description": "Specialized agent system for pi: task delegation, activation/deactivation, and system prompt injection via .md files.",
   "keywords": [
     "pi-package",
     "pi-extension",

@@ -1,13 +1,10 @@
 /**
- * Types partagés pour le système d'agents
+ * Shared types for the agent system
  */
 
 export interface AgentConfig {
   name: string;
   description: string;
-  /** DEPRECATED : Les règles de délégation sont dans APPEND_SYSTEM.md
-   * Ce champ est conservé pour compatibilité arrière mais n'est plus utilisé. */
-  whenToDelegate?: string;
   tools?: string[];
   model?: string;
   thinkingLevel?: string;
@@ -15,7 +12,8 @@ export interface AgentConfig {
   source: "user" | "project";
   filePath: string;
   outputFormat?: "text" | "json" | "markdown";
-  /** Si true, charge AGENTS.md / CLAUDE.md du répertoire courant et l'appende au system prompt. Silencieux si absent. */
+  /** If true, loads AGENTS.md from the current directory and appends it to the
+   * system prompt. Silent if absent. */
   useAgentFile?: boolean;
 }
 
@@ -26,6 +24,23 @@ export interface AgentUsage {
   cacheWrite: number;
   cost: number;
 }
+
+/**
+ * Progress snapshot of a delegated agent, emitted on every sub-process event.
+ * Replaces a callback that took 8 positional arguments.
+ */
+export interface AgentProgress {
+  actions: string[];
+  activeTools: string[];
+  usage: AgentUsage;
+  durationMs: number;
+  toolCount: number;
+  toolFailCount: number;
+  thinkingPhases: number;
+  thinkingText: string;
+}
+
+export type AgentProgressCallback = (progress: AgentProgress) => void;
 
 export interface AgentResult {
   agent: string;
@@ -42,18 +57,6 @@ export interface AgentResult {
   toolFailCount?: number;
   thinkingPhases?: number;
   thinkingText?: string;
-}
-
-export interface AgentOverride {
-  systemPrompt?: string;
-  tools?: string[];
-  model?: string;
-  thinkingLevel?: string;
-  outputFormat?: "text" | "json" | "markdown";
-}
-
-export interface AgentConfigFile {
-  agents?: Record<string, AgentOverride>;
 }
 
 export interface DelegateParams {

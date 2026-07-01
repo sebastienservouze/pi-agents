@@ -1,44 +1,49 @@
 /**
- * Point d'entrée de l'extension Agents
+ * Entry point of the Agents extension.
  *
- * Centralise l'enregistrement de tous les composants :
- *   - Outil `delegate` (délégation à des sous-agents)
- *   - Commande `/agent` (activation/désactivation)
- *   - Hook `before_agent_start` (injection system prompt)
+ * Registers all components:
+ *   - `delegate` tool (delegation to sub-agents)
+ *   - `/agent` command (activation/deactivation)
+ *   - `before_agent_start` hook (system prompt injection)
  *
- * Les implémentations sont dans les modules voisins.
+ * Implementations live in the neighbouring modules.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerDelegateTool } from "./delegate.js";
 import { registerAgentCommand, showAgentSelector } from "./cmd-agent.js";
 import { registerHooks } from "./hook.js";
+import { getDefaultAgentName } from "./config.js";
 import type { ActiveAgentState } from "./types.js";
 
 export default function (pi: ExtensionAPI) {
-  // État partagé entre la commande et le hook
+  // State shared between the command and the hook
   let activeAgentState: ActiveAgentState | null = null;
 
   const getState = () => activeAgentState;
   const setState = (s: ActiveAgentState | null) => { activeAgentState = s; };
 
-  // Enregistrement
+  // Registration
   registerDelegateTool(pi);
   registerAgentCommand(pi, getState, setState);
   registerHooks(pi, () => activeAgentState?.name ?? null, {
-    autoActivateAgentName: "cloude",
+    // Opt-in default agent, read from the persisted config (set via
+    // `/agent-default`) or the PI_DEFAULT_AGENT env override. Resolved once at
+    // load; auto-activates the agent at the first before_agent_start. Unset ⇒
+    // no auto-activation.
+    autoActivateAgentName: getDefaultAgentName(),
     setActiveAgentState: setState,
   });
 
-  // Raccourci Alt+A → sélecteur d'agent
+  // Shortcut Alt+A → agent selector
   pi.registerShortcut("alt+a", {
-    description: "Sélectionner un agent",
+    description: "Select an agent",
     handler: async (ctx) => {
       await showAgentSelector(pi, ctx, getState, setState);
     },
   });
 
-  // Nettoyer la variable d'environnement au shutdown pour éviter les faux positifs
+  // Clear the env var on shutdown to avoid false positives
   pi.on("session_shutdown", async () => {
     delete process.env.PI_ACTIVE_AGENT;
   });

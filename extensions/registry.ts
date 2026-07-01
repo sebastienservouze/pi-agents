@@ -1,10 +1,10 @@
 /**
- * Découverte et chargement des agents depuis les fichiers .md
- * - .pi/agents/*.md (projet)
+ * Discovery and loading of agents from .md files
+ * - .pi/agents/*.md (project)
  * - ~/.pi/agent/agents/*.md (global)
  *
- * Les agents projet écrasent les agents user en cas de conflit de nom.
- * Toute la configuration provient du frontmatter YAML des fichiers .md.
+ * Project agents override user agents on name conflict.
+ * All configuration comes from the YAML frontmatter of the .md files.
  */
 
 import * as fs from "node:fs";
@@ -13,9 +13,44 @@ import * as path from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./types.js";
 
+/** Default tools applied when an agent declares no `tools:` in its frontmatter. */
+export const DEFAULT_AGENT_TOOLS = ["read", "grep", "find", "ls", "bash", "ask_user_question"];
+
+// ─── Frontmatter coercion ─────────────────────────────────────────────────────
+// The YAML parser may return strings, booleans or arrays depending on how a
+// field is written. These helpers normalize each field so the loader tolerates
+// both `tools: a, b` and `tools: [a, b]`, and both `useAgentFile: true` and
+// `useAgentFile: "true"`.
+
+/** Returns a trimmed non-empty string, or undefined. */
+function asString(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length ? t : undefined;
+}
+
+/** Accepts a YAML list (`[a, b]`) or a comma-separated string (`a, b`). */
+function asToolsList(v: unknown): string[] | undefined {
+  let list: string[];
+  if (Array.isArray(v)) {
+    list = v.map((t) => String(t).trim());
+  } else if (typeof v === "string") {
+    list = v.split(",").map((t) => t.trim());
+  } else {
+    return undefined;
+  }
+  const filtered = list.filter(Boolean);
+  return filtered.length ? filtered : undefined;
+}
+
+/** Accepts a real boolean or the string "true". */
+function asBool(v: unknown): boolean {
+  return v === true || v === "true";
+}
+
 // ─── Cache ──────────────────────────────────────────────────────────────────
 
-const CACHE_TTL_MS = 30_000; // 30 secondes
+const CACHE_TTL_MS = 30_000; // 30 seconds
 
 interface CacheEntry {
   agents: AgentConfig[];
@@ -27,7 +62,7 @@ const _agentCache = new Map<string, CacheEntry>();
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
- * Récupère le répertoire global des agents
+ * Returns the global agents directory.
  */
 export function getAgentDir(): string {
   const envDir = process.env.PI_CODING_AGENT_DIR;
@@ -35,7 +70,7 @@ export function getAgentDir(): string {
 }
 
 /**
- * Charge les agents depuis un répertoire contenant des fichiers .md
+ * Loads agents from a directory containing .md files.
  */
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
   if (!fs.existsSync(dir)) return [];
@@ -61,57 +96,48 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
       continue;
     }
 
-    let frontmatter: Record<string, string>;
+    let frontmatter: Record<string, unknown>;
     let body: string;
     try {
-      const parsed = parseFrontmatter<Record<string, string>>(content);
+      const parsed = parseFrontmatter<Record<string, unknown>>(content);
       frontmatter = parsed.frontmatter;
       body = parsed.body;
     } catch {
       continue;
     }
 
-    if (!frontmatter.name || !frontmatter.description) {
+    const name = asString(frontmatter.name);
+    const description = asString(frontmatter.description);
+    if (!name || !description) {
       continue;
     }
 
-    const tools = frontmatter.tools
-      ?.split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    const outputFormat = frontmatter.outputFormat as "text" | "json" | "markdown" | undefined;
-
-    // DEPRECATED : whenToDelegate n'est plus utilisé.
-    // Les règles de délégation sont dans APPEND_SYSTEM.md
-    const whenToDelegate = frontmatter.whenToDelegate || undefined; // Garder pour compat
+    const outputFormat = asString(frontmatter.outputFormat) as
+      | "text"
+      | "json"
+      | "markdown"
+      | undefined;
 
     agents.push({
-      name: frontmatter.name,
-      description: frontmatter.description,
-      whenToDelegate, // DEPRECATED — peut être supprimé dans une version future
-      tools: tools?.length ? tools : undefined,
-      model: frontmatter.model || undefined,
-      thinkingLevel: frontmatter.thinkingLevel || undefined,
+      name,
+      description,
+      tools: asToolsList(frontmatter.tools),
+      model: asString(frontmatter.model),
+      thinkingLevel: asString(frontmatter.thinkingLevel),
       systemPrompt: body.trim(),
       source,
       filePath,
       outputFormat,
-      useAgentFile: frontmatter.useAgentFile === "true",
+      useAgentFile: asBool(frontmatter.useAgentFile),
     });
   }
 
   return agents;
 }
 
-export interface AgentDiscoveryOptions {
-  includeMetadata?: boolean;
-}
-
-
 /**
- * Découvre tous les agents disponibles (user + projet),
- * Le projet écrase le global en cas de conflit de nom.
+ * Discovers all available agents (user + project).
+ * Project overrides global on name conflict.
  */
 export function discoverAgents(cwd: string): AgentConfig[] {
   const cached = _agentCache.get(cwd);
@@ -125,7 +151,7 @@ export function discoverAgents(cwd: string): AgentConfig[] {
   const userAgents = loadAgentsFromDir(userDir, "user");
   const projectAgents = loadAgentsFromDir(projectDir, "project");
 
-  // Projet écrase user en cas de conflit de nom
+  // Project overrides user on name conflict
   const map = new Map<string, AgentConfig>();
   for (const a of userAgents) map.set(a.name, a);
   for (const a of projectAgents) map.set(a.name, a);
@@ -137,21 +163,8 @@ export function discoverAgents(cwd: string): AgentConfig[] {
 }
 
 /**
- * Trouve un agent par son nom
+ * Finds an agent by name.
  */
 export function findAgent(cwd: string, name: string): AgentConfig | undefined {
   return discoverAgents(cwd).find((a) => a.name === name);
-}
-
-/**
- * Vérifie si un répertoire contient des fichiers .md d'agents projet
- */
-export function hasProjectAgents(cwd: string): boolean {
-  const projectDir = path.join(cwd, ".pi", "agents");
-  if (!fs.existsSync(projectDir)) return false;
-  try {
-    return fs.readdirSync(projectDir).some((f) => f.endsWith(".md"));
-  } catch {
-    return false;
-  }
 }

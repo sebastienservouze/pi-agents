@@ -9,5 +9,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Première version : outil `delegate`, commandes `/agent` et `/agent-list`, hook `before_agent_start`, raccourci `Alt+A`.
-- Découverte d'agents depuis `.pi/agents/*.md` (projet) et `~/.pi/agent/agents/*.md` (global).
+- Initial release: `delegate` tool, `/agent` and `/agent-list` commands, `before_agent_start` hook, `Alt+A` shortcut.
+- Agent discovery from `.pi/agents/*.md` (project) and `~/.pi/agent/agents/*.md` (global).
