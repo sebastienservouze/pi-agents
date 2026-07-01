@@ -29,7 +29,6 @@ description: Explores a codebase and reports where things live
 tools: read, grep, find, ls          # list or comma-separated string
 model: anthropic/claude-sonnet-5     # "provider/model" or a bare model id
 thinkingLevel: medium
-outputFormat: markdown
 useAgentFile: true
 ---
 
