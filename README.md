@@ -46,7 +46,6 @@ references. Do not modify anything.
 | `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ a sensible default set. |
 | `model` | no | `provider/model` or a bare model id. |
 | `thinkingLevel` | no | Thinking level passed to the agent. |
-| `outputFormat` | no | `text` \| `json` \| `markdown` (hint for delegation). |
 | `useAgentFile` | no | `true` to append the current directory's `AGENTS.md` to the system prompt. |
 
 The body (everything after the frontmatter) becomes the agent's system prompt.
