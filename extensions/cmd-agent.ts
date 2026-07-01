@@ -124,15 +124,6 @@ export async function showAgentSelector(
   const state = getState();
   const items: SelectItem[] = [];
 
-  // "Deactivate" option if an agent is active
-  if (state) {
-    items.push({
-      value: "off",
-      label: `Deactivate (${state.name})`,
-      description: "Restore default tools, model and thinking level",
-    });
-  }
-
   for (const a of agents) {
     const isActive = a.name === state?.name;
     const label = isActive ? `${a.name}  ●` : a.name;
@@ -143,6 +134,19 @@ export async function showAgentSelector(
       description: modelInfo ? `${a.description} — ${modelInfo}` : a.description,
     });
   }
+
+  // "Deactivate" goes LAST so a reflexive Enter never lands on it.
+  if (state) {
+    items.push({
+      value: "off",
+      label: `Deactivate (${state.name})`,
+      description: "Restore default tools, model and thinking level",
+    });
+  }
+
+  // Index of the active agent within `items` (agents come first), used to
+  // pre-highlight it below.
+  const activeIndex = state ? items.findIndex((it) => it.value === state.name) : -1;
 
   const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
     const container = new Container();
@@ -159,6 +163,9 @@ export async function showAgentSelector(
       scrollInfo: (t) => theme.fg("dim", t),
       noMatch: (t) => theme.fg("warning", t),
     });
+    // Open on the active agent so a reflexive Enter re-selects it instead of
+    // the first entry.
+    if (activeIndex > 0) selectList.setSelectedIndex(activeIndex);
     selectList.onSelect = (item) => done(item.value);
     selectList.onCancel = () => done(null);
     container.addChild(selectList);
