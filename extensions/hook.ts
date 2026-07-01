@@ -27,6 +27,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
+import { applyAgent, readPersistedAgent } from "./activation.js";
 import type { ActiveAgentState } from "./types.js";
 
 // ─── useAgentFile: loading the cwd's AGENTS.md file ──────────────────────────
@@ -93,6 +94,44 @@ export function registerHooks(
   // array while an allow-list is active, the allow-list is NOT enforced — warn
   // once so a silent bypass doesn't go unnoticed.
   let warnedGuardBypass = false;
+
+  // Restore the session's active agent when an existing session is loaded
+  // (reload/resume/fork, or startup with a non-empty session). A fresh session
+  // has no record, so nothing is restored and the default auto-activation
+  // applies as usual. A persisted "off" is respected.
+  pi.on("session_start", async (event, ctx) => {
+    if (event.reason === "new") return; // brand-new session: nothing to restore
+
+    let record: { name: string | null } | undefined;
+    try {
+      record = readPersistedAgent(ctx.sessionManager.getEntries());
+    } catch {
+      return; // fail-open: no restore
+    }
+    if (!record) return; // no prior intent → let default auto-activation handle it
+
+    // Explicit "off": keep the session deactivated and stop the default from
+    // coming back next turn.
+    if (record.name === null) {
+      autoActivationAttempted = true;
+      return;
+    }
+
+    // The agent no longer exists → fall back to the default auto-activation.
+    const agent = findAgent(ctx.cwd, record.name);
+    if (!agent?.systemPrompt) return;
+
+    // Re-apply it and record the state. Setting the state makes before_agent_start
+    // take the "active agent" branch, which naturally skips auto-activation.
+    try {
+      const state = await applyAgent(pi, ctx, agent, null);
+      options?.setActiveAgentState?.(state);
+      process.env.PI_ACTIVE_AGENT = agent.name;
+      try { ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`)); } catch {}
+    } catch {
+      // fail-open: leave default behaviour
+    }
+  });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const activeAgentName = getActiveAgentName();

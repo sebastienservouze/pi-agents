@@ -13,7 +13,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Container, type SelectItem, type AutocompleteItem, SelectList, Text } from "@earendil-works/pi-tui";
-import { discoverAgents, DEFAULT_AGENT_TOOLS } from "./registry.js";
+import { discoverAgents } from "./registry.js";
+import { applyAgent, persistActiveAgent } from "./activation.js";
 import { getDefaultAgentName, setDefaultAgentName } from "./config.js";
 import type { ActiveAgentState } from "./types.js";
 
@@ -32,50 +33,12 @@ export async function activateAgent(
     return;
   }
 
-  const state = getState();
-  // Save the default state on the first switch
-  const currentState = state ?? {
-    name: agent.name,
-    savedTools: pi.getActiveTools(),
-    savedModelId: ctx.model?.id,
-    savedThinkingLevel: pi.getThinkingLevel(),
-  };
-
-  // Apply the tools
-  const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
-  pi.setActiveTools(toolsToSet);
-
-  // Apply the thinking level (if specified)
-  if (agent.thinkingLevel) {
-    pi.setThinkingLevel(agent.thinkingLevel as ThinkingLevel);
-  }
-
-  // Apply the model (if specified)
-  if (agent.model) {
-    // Supports both formats: "provider/model" (composite) and "model" (id only)
-    const slashIdx = agent.model.indexOf("/");
-    const model = slashIdx !== -1
-      ? ctx.modelRegistry.find(agent.model.slice(0, slashIdx), agent.model.slice(slashIdx + 1))
-      : ctx.modelRegistry.getAll().find((m) => m.id === agent.model);
-
-    if (model) {
-      const success = await pi.setModel(model);
-      if (!success) {
-        ctx.ui.notify(
-          `Agent "${agent.name}": model "${agent.model}" without configured API key`,
-          "warning",
-        );
-      }
-    } else {
-      ctx.ui.notify(
-        `Agent "${agent.name}": model "${agent.model}" not found`,
-        "warning",
-      );
-    }
-  }
-
-  setState({ ...currentState, name: agent.name });
+  // Apply settings (keeping the original restore point on a first switch),
+  // record the state, and persist it so it survives a reload.
+  const state = await applyAgent(pi, ctx, agent, getState());
+  setState(state);
   process.env.PI_ACTIVE_AGENT = agent.name;
+  persistActiveAgent(pi, agent.name);
   ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`));
   ctx.ui.notify(`Agent "${agent.name}" activated`, "info");
 }
@@ -104,6 +67,7 @@ async function deactivateAgent(
 
   setState(null);
   delete process.env.PI_ACTIVE_AGENT;
+  persistActiveAgent(pi, null); // record the "off" intent so reload respects it
   ctx.ui.setStatus("agent", undefined);
   ctx.ui.notify("Agent deactivated — tools, model and thinking level restored", "info");
 }
