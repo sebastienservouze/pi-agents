@@ -27,6 +27,7 @@ Each file is a YAML frontmatter block followed by the system prompt body:
 name: explorer
 description: Explores a codebase and reports where things live
 tools: read, grep, find, ls          # list or comma-separated string
+skills: research, code-review        # list or comma-separated string
 model: anthropic/claude-sonnet-5     # "provider/model" or a bare model id
 thinkingLevel: medium
 useAgentFile: true
@@ -43,11 +44,15 @@ references. Do not modify anything.
 | `name` | yes | Unique agent name (used by `/agent` and `delegate`). |
 | `description` | yes | Shown in selectors and delegation guidelines. |
 | `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ a sensible default set. |
+| `skills` | no | Allow-list of skill names, as a YAML list or a comma-separated string. Only these are advertised in the agent's system prompt. Omitted ⇒ no skills block. |
 | `model` | no | `provider/model` or a bare model id. |
 | `thinkingLevel` | no | Thinking level passed to the agent. |
 | `useAgentFile` | no | `true` to append the current directory's `AGENTS.md` to the system prompt. |
 
-The body (everything after the frontmatter) becomes the agent's system prompt.
+The body (everything after the frontmatter) becomes the agent's system prompt. For
+agent mode (`/agent`, auto-activation), it is composed with the skills allow-list,
+pi's `contextFiles`, an environment block and the current date. Use `/agent-prompt`
+to inspect the prompt actually sent.
 
 ## Agent mode
 
@@ -57,6 +62,9 @@ Activate an agent to take over the current session:
 - `/agent <name>` — activate directly
 - `/agent off` — deactivate and restore the original tools, model and thinking level
 - `/agent-list` — list available agents
+- `/agent-prompt [first]` — show the system prompt actually sent (post-rewrite);
+  `first` shows the session-start prompt (persisted, survives reload). The full
+  text is also dumped to `~/.pi/last-system-prompt.md`.
 
 While an agent is active its `tools:` allow-list is enforced on every provider
 request: tools injected by other extensions (e.g. the MCP `ctx_*` family) that
@@ -82,9 +90,11 @@ delegate agent=<name> task=<task with all the needed context>
 ```
 
 The agent runs in an isolated `pi --mode json` sub-process with its own system
-prompt (only the agent's `.md`, no default pi prompt), tools, model and thinking
-level. The result is streamed back with live activity and usage metrics
-(tokens, cost, duration, tool calls).
+prompt — the agent's `.md` composed with a delegation notice, an environment
+block and the current date, passed natively via `--system-prompt` (no default
+pi prompt, no temp file) — tools, model and thinking level. The result is
+streamed back with live activity and usage metrics (tokens, cost, duration,
+tool calls).
 
 ## License
 
