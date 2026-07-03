@@ -65,6 +65,9 @@ Activate an agent to take over the current session:
 - `/agent-prompt [first]` — show the system prompt actually sent (post-rewrite);
   `first` shows the session-start prompt (persisted, survives reload). The full
   text is also dumped to `~/.pi/last-system-prompt.md`.
+- `/agent-tools` — show the tools actually sent to the provider on the last
+  request (post allow-list enforcement, not just the agent's configured
+  `tools:`).
 
 While an agent is active its `tools:` allow-list is enforced on every provider
 request: tools injected by other extensions (e.g. the MCP `ctx_*` family) that

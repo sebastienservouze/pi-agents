@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `skills:` frontmatter field: allow-list of skill names advertised in the
   agent's composed system prompt.
 - `/agent-prompt [first]` command to inspect the system prompt actually sent
-  (post-rewrite), dumped to `~/.pi/last-system-prompt.md`.
+  (post-rewrite), dumped to `~/.pi/last-system-prompt.md`. Displayed as a
+  scrollable chat message (filtered out of the LLM context), not a modal.
+- `/agent-tools` command to inspect the tools actually sent to the provider on
+  the last request, captured after the allow-list guard runs.
 
 ### Changed
 

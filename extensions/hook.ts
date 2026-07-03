@@ -26,8 +26,8 @@
  *       tools declared in `tools:`. Fail-open.
  *
  * - context:
- *       Strips the /agent-prompt viewer message (display-only chat message,
- *       see cmd-agent.ts + prompt-store.ts) from the LLM context.
+ *       Strips the /agent-prompt and /agent-tools viewer messages (display-only
+ *       chat messages) from the LLM context.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -35,6 +35,7 @@ import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
 import { applyAgent, readPersistedAgent } from "./activation.js";
 import { composeAgentPrompt } from "./prompt-build.js";
 import { AGENT_PROMPT_VIEW_TYPE, recordSentPrompt } from "./prompt-store.js";
+import { AGENT_TOOLS_VIEW_TYPE, recordSentTools } from "./tools-store.js";
 import type { ActiveAgentState } from "./types.js";
 
 // ─── Reading the `tools` array from the provider payload ─────────────────────
@@ -216,10 +217,11 @@ export function registerHooks(
   // The /agent-prompt viewer message (customType AGENT_PROMPT_VIEW_TYPE) is
   // display-only: strip it from the LLM context so it never burns tokens or
   // confuses the model with its own prompt.
+  const VIEWER_TYPES = new Set([AGENT_PROMPT_VIEW_TYPE, AGENT_TOOLS_VIEW_TYPE]);
   pi.on("context", async (event) => {
     const messages = event.messages as Array<{ role?: string; customType?: string }>;
     const filtered = messages.filter(
-      (m) => !(m.role === "custom" && m.customType === AGENT_PROMPT_VIEW_TYPE),
+      (m) => !(m.role === "custom" && m.customType && VIEWER_TYPES.has(m.customType)),
     );
     if (filtered.length !== messages.length) {
       return { messages: filtered as typeof event.messages };
@@ -274,6 +276,15 @@ export function registerHooks(
           tools.push(...kept);
         }
       }
+
+      // Record the FINAL tool list for /agent-tools — taken after the guard
+      // above ran, so it reflects exactly what goes out on the wire.
+      recordSentTools({
+        agentName: getActiveAgentName(),
+        tools: (tools ?? []).map(toolName).filter((n): n is string => !!n).sort(),
+        found: !!tools,
+        guardApplied: !!allowSet,
+      });
     } catch {
       // fail-open: payload unchanged
     }

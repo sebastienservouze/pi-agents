@@ -26,6 +26,7 @@ import {
   readPersistedPrompt,
   type SentPromptRecord,
 } from "./prompt-store.js";
+import { AGENT_TOOLS_VIEW_TYPE, getLatestSentTools } from "./tools-store.js";
 import type { ActiveAgentState } from "./types.js";
 
 // ── Activate an agent ──
@@ -352,6 +353,41 @@ export function registerAgentCommand(
       pi.sendMessage({
         customType: AGENT_PROMPT_VIEW_TYPE,
         content: `**System prompt (as sent)**\n\n${header}\n\n\`\`\`\n${rec.prompt}\n\`\`\``,
+        display: true,
+      });
+    },
+  });
+
+  // ── /agent-tools command: inspect the tools actually sent to the provider ──
+  // Captured in before_provider_request AFTER the allow-list guard runs, so
+  // this is the real, final list — not just the agent's configured `tools:`.
+  pi.registerCommand("agent-tools", {
+    description: "Show the tools actually sent to the provider on the last request",
+    handler: async () => {
+      const rec = getLatestSentTools();
+      if (!rec) {
+        pi.sendMessage({
+          customType: AGENT_TOOLS_VIEW_TYPE,
+          content: "No provider request sent yet this session — send a turn first.",
+          display: true,
+        });
+        return;
+      }
+
+      const when = new Date(rec.timestamp).toISOString();
+      const header = `Agent: ${rec.agentName ?? "(none)"} · sent: ${when} · ${rec.tools.length} tool(s)` +
+        (rec.guardApplied ? " · allow-list enforced" : "") +
+        (!rec.found ? " · ⚠ tools array not found in payload (guard could not verify)" : "");
+
+      const list = rec.tools.length
+        ? rec.tools.map((t) => `- ${t}`).join("\n")
+        : "_(none)_";
+
+      // Same pattern as /agent-prompt: a scrollable chat message, filtered
+      // out of the LLM context by the "context" hook (see hook.ts).
+      pi.sendMessage({
+        customType: AGENT_TOOLS_VIEW_TYPE,
+        content: `**Tools sent to the provider (last request)**\n\n${header}\n\n${list}`,
         display: true,
       });
     },
