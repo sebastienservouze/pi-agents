@@ -18,6 +18,11 @@ export interface SentPromptRecord {
 
 const SESSION_PROMPT_TYPE = "nerisma-agents/system-prompt";
 
+/** customType used by /agent-prompt to display the prompt as a scrollable
+ * chat message (via pi.sendMessage). Filtered out of the LLM context by the
+ * "context" hook in hook.ts — display-only, never sent to the model. */
+export const AGENT_PROMPT_VIEW_TYPE = "nerisma-agents/agent-prompt-view";
+
 let _first: SentPromptRecord | null = null;
 let _latest: SentPromptRecord | null = null;
 

@@ -20,6 +20,7 @@ import { discoverAgents } from "./registry.js";
 import { applyAgent, persistActiveAgent } from "./activation.js";
 import { getDefaultAgentName, setDefaultAgentName } from "./config.js";
 import {
+  AGENT_PROMPT_VIEW_TYPE,
   getFirstSentPrompt,
   getLatestSentPrompt,
   readPersistedPrompt,
@@ -345,31 +346,14 @@ export function registerAgentCommand(
         `Agent: ${rec.agentName ?? "(none)"} · source: ${rec.source} · sent: ${when} · ${rec.prompt.length} chars` +
         (dumped ? `\nFull text: ${dumpPath}` : "");
 
-      // Inline preview when the rich UI is available; otherwise notify only.
-      const preview = rec.prompt.length > 2000 ? rec.prompt.slice(0, 2000) + "\n… (truncated — see file)" : rec.prompt;
-      const shown = await ctx.ui.custom<boolean>((tui, theme, _kb, done) => {
-        const container = new Container();
-        container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-        container.addChild(new Text(theme.fg("accent", theme.bold("System prompt (as sent)")), 1, 0));
-        container.addChild(new Text(theme.fg("muted", header), 1, 0));
-        container.addChild(new Text(preview, 1, 0));
-        container.addChild(new Text(theme.fg("dim", "esc/enter close"), 1, 0));
-        container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-        return {
-          render: (w) => container.render(w),
-          invalidate: () => container.invalidate(),
-          handleInput: (data) => {
-            // Any of esc / enter / q closes
-            if (data === "\u001b" || data === "\r" || data === "q") done(true);
-            tui.requestRender();
-          },
-        };
+      // Posted as a chat message (not a modal) so it's part of the scrollable
+      // transcript. Filtered out of the LLM context by the "context" hook
+      // (see hook.ts) — display-only, never sent to the model.
+      pi.sendMessage({
+        customType: AGENT_PROMPT_VIEW_TYPE,
+        content: `**System prompt (as sent)**\n\n${header}\n\n\`\`\`\n${rec.prompt}\n\`\`\``,
+        display: true,
       });
-
-      if (shown === undefined) {
-        // RPC fallback: no custom UI — the notify carries the essentials.
-        ctx.ui.notify(header, "info");
-      }
     },
   });
 

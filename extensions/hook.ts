@@ -24,13 +24,17 @@
  *       bridge (context-mode) injects its whole ctx_* family on top of the
  *       frontmatter; here, at the last moment before sending, we keep only the
  *       tools declared in `tools:`. Fail-open.
+ *
+ * - context:
+ *       Strips the /agent-prompt viewer message (display-only chat message,
+ *       see cmd-agent.ts + prompt-store.ts) from the LLM context.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
 import { applyAgent, readPersistedAgent } from "./activation.js";
 import { composeAgentPrompt } from "./prompt-build.js";
-import { recordSentPrompt } from "./prompt-store.js";
+import { AGENT_PROMPT_VIEW_TYPE, recordSentPrompt } from "./prompt-store.js";
 import type { ActiveAgentState } from "./types.js";
 
 // ─── Reading the `tools` array from the provider payload ─────────────────────
@@ -206,6 +210,20 @@ export function registerHooks(
 
     // ── Main agent (no auto-activation) ──
     // pi injects APPEND_SYSTEM.md automatically — no modification.
+    return;
+  });
+
+  // The /agent-prompt viewer message (customType AGENT_PROMPT_VIEW_TYPE) is
+  // display-only: strip it from the LLM context so it never burns tokens or
+  // confuses the model with its own prompt.
+  pi.on("context", async (event) => {
+    const messages = event.messages as Array<{ role?: string; customType?: string }>;
+    const filtered = messages.filter(
+      (m) => !(m.role === "custom" && m.customType === AGENT_PROMPT_VIEW_TYPE),
+    );
+    if (filtered.length !== messages.length) {
+      return { messages: filtered as typeof event.messages };
+    }
     return;
   });
 
