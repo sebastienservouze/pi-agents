@@ -6,6 +6,9 @@ export interface AgentConfig {
   name: string;
   description: string;
   tools?: string[];
+  /** Allow-list of skill names (frontmatter `skills:`). Only these skills are
+   * advertised in the agent's system prompt. Absent → no skills block. */
+  skills?: string[];
   model?: string;
   thinkingLevel?: string;
   systemPrompt: string;

@@ -9,6 +9,9 @@
  * Exports showAgentSelector() for the Alt+A shortcut.
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -16,6 +19,12 @@ import { Container, type SelectItem, type AutocompleteItem, SelectList, Text } f
 import { discoverAgents } from "./registry.js";
 import { applyAgent, persistActiveAgent } from "./activation.js";
 import { getDefaultAgentName, setDefaultAgentName } from "./config.js";
+import {
+  getFirstSentPrompt,
+  getLatestSentPrompt,
+  readPersistedPrompt,
+  type SentPromptRecord,
+} from "./prompt-store.js";
 import type { ActiveAgentState } from "./types.js";
 
 // ── Activate an agent ──
@@ -283,6 +292,84 @@ export function registerAgentCommand(
         `Default agent: ${agent.name} — active at next pi start (or /agent ${agent.name} to activate now)`,
         "info",
       );
+    },
+  });
+
+  // ── /agent-prompt command: inspect the system prompt actually sent ──
+  // Shows the prompt recorded by the before_agent_start hook (post-rewrite).
+  //   /agent-prompt          → latest sent prompt (this session)
+  //   /agent-prompt first    → session-start prompt (survives reload via session entry)
+  // The full text is written to ~/.pi/last-system-prompt.md for easy viewing.
+  pi.registerCommand("agent-prompt", {
+    description: "Show the system prompt actually sent (post-rewrite). Usage: /agent-prompt [first]",
+    getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
+      const items: AutocompleteItem[] = [];
+      if ("first".startsWith(prefix.toLowerCase())) {
+        items.push({ value: "first", label: "first", description: "Session-start prompt (persisted, survives reload)" });
+      }
+      return items.length ? items : null;
+    },
+    handler: async (args, ctx) => {
+      const wantFirst = (args?.trim() ?? "") === "first";
+
+      // In-memory record first; fall back to the persisted session entry
+      // (covers reload/resume where memory is empty).
+      let rec: SentPromptRecord | null = wantFirst ? getFirstSentPrompt() : getLatestSentPrompt();
+      if (!rec) {
+        try {
+          rec = readPersistedPrompt(ctx.sessionManager.getEntries());
+        } catch {
+          rec = null;
+        }
+      }
+      if (!rec) {
+        ctx.ui.notify(
+          "No rewritten system prompt recorded for this session (no agent active, or no turn sent yet)",
+          "info",
+        );
+        return;
+      }
+
+      // Dump the full text to a stable path — the reliable viewer regardless
+      // of UI capabilities.
+      const dumpPath = path.join(os.homedir(), ".pi", "last-system-prompt.md");
+      let dumped = false;
+      try {
+        fs.mkdirSync(path.dirname(dumpPath), { recursive: true });
+        fs.writeFileSync(dumpPath, rec.prompt, "utf-8");
+        dumped = true;
+      } catch { /* dump is best-effort */ }
+
+      const when = rec.timestamp ? new Date(rec.timestamp).toISOString() : "unknown";
+      const header =
+        `Agent: ${rec.agentName ?? "(none)"} · source: ${rec.source} · sent: ${when} · ${rec.prompt.length} chars` +
+        (dumped ? `\nFull text: ${dumpPath}` : "");
+
+      // Inline preview when the rich UI is available; otherwise notify only.
+      const preview = rec.prompt.length > 2000 ? rec.prompt.slice(0, 2000) + "\n… (truncated — see file)" : rec.prompt;
+      const shown = await ctx.ui.custom<boolean>((tui, theme, _kb, done) => {
+        const container = new Container();
+        container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+        container.addChild(new Text(theme.fg("accent", theme.bold("System prompt (as sent)")), 1, 0));
+        container.addChild(new Text(theme.fg("muted", header), 1, 0));
+        container.addChild(new Text(preview, 1, 0));
+        container.addChild(new Text(theme.fg("dim", "esc/enter close"), 1, 0));
+        container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+        return {
+          render: (w) => container.render(w),
+          invalidate: () => container.invalidate(),
+          handleInput: (data) => {
+            // Any of esc / enter / q closes
+            if (data === "\u001b" || data === "\r" || data === "q") done(true);
+            tui.requestRender();
+          },
+        };
+      });
+
+      if (shown === undefined) {
+        // RPC fallback: no custom UI — the notify carries the essentials.
+        ctx.ui.notify(header, "info");
+      }
     },
   });
 

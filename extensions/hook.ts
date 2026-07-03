@@ -3,11 +3,14 @@
  *
  * - before_agent_start:
  *   - Delegated sub-agent (PI_DELEGATED_SUBAGENT=1):
- *       Reads PI_DELEGATED_AGENT_PROMPT_FILE and uses it as the EXCLUSIVE system
- *       prompt. Guarantees: no default pi prompt, only the agent's .md.
+ *       No prompt work here — the runner passes the composed prompt natively
+ *       via `--system-prompt`. This hook only guards against agent-mode logic
+ *       (auto-activation…) firing inside the sub-process.
  *
  *   - Active agent (`/agent <name>` mode):
- *       Replaces the system prompt with the agent's.
+ *       Replaces the system prompt with the agent's, composed with the skills
+ *       allow-list, pi's contextFiles, an environment block and the date
+ *       (see prompt-build.ts). The sent prompt is recorded for /agent-prompt.
  *
  *   - Auto-activation:
  *       Activates a default agent once per session (system prompt, tools, model,
@@ -23,34 +26,12 @@
  *       tools declared in `tools:`. Fail-open.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
 import { applyAgent, readPersistedAgent } from "./activation.js";
+import { composeAgentPrompt } from "./prompt-build.js";
+import { recordSentPrompt } from "./prompt-store.js";
 import type { ActiveAgentState } from "./types.js";
-
-// ─── useAgentFile: loading the cwd's AGENTS.md file ──────────────────────────
-
-/**
- * Looks for AGENTS.md in `cwd`.
- * Returns the content wrapped in <project_context> tags (same format as pi),
- * or null if no file is found or it cannot be read.
- */
-function loadAgentFileFromCwd(cwd: string): string | null {
-  const filePath = path.join(cwd, "AGENTS.md");
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    return (
-      `\n\n<project_context>\n\nProject-specific instructions and guidelines:\n\n` +
-      `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n` +
-      `</project_context>\n`
-    );
-  } catch {
-    return null;
-  }
-}
 
 // ─── Reading the `tools` array from the provider payload ─────────────────────
 
@@ -135,36 +116,32 @@ export function registerHooks(
 
   pi.on("before_agent_start", async (event, ctx) => {
     const activeAgentName = getActiveAgentName();
-    const isDelegatedSubAgent = process.env.PI_DELEGATED_SUBAGENT === "1";
 
     // ── Delegated sub-agent ──
-    // Use ONLY the prompt file passed by the runner.
-    // Guarantees: no default pi prompt, no parent/child stacking.
-    if (isDelegatedSubAgent) {
-      const promptFile = process.env.PI_DELEGATED_AGENT_PROMPT_FILE;
-      if (promptFile) {
-        try {
-          const content = fs.readFileSync(promptFile, "utf-8");
-          return { systemPrompt: content };
-        } catch {
-          // File unreadable: fall back without modification
-        }
-      }
+    // The runner already passed the composed prompt via `--system-prompt`;
+    // pi applies it natively. Just make sure no agent-mode logic fires here.
+    if (process.env.PI_DELEGATED_SUBAGENT === "1") {
       return;
     }
 
     // ── Active agent via /agent <name> ──
-    // Full replacement of the system prompt with the agent's.
+    // Full replacement of the system prompt with the agent's (composed).
     if (activeAgentName) {
       const agent = findAgent(ctx.cwd, activeAgentName);
       if (!agent?.systemPrompt) {
         return;
       }
-      const finalPrompt =
-        agent.useAgentFile
-          ? agent.systemPrompt + (loadAgentFileFromCwd(ctx.cwd) ?? "")
-          : agent.systemPrompt;
-      return { systemPrompt: finalPrompt };
+      const { prompt, missingSkills } = composeAgentPrompt(pi, ctx.cwd, agent, {
+        systemPromptOptions: (event as { systemPromptOptions?: unknown }).systemPromptOptions,
+        modelId: ctx.model?.id,
+      });
+      if (missingSkills.length) {
+        try {
+          ctx.ui.notify(`Agent "${agent.name}": unknown skills ignored: ${missingSkills.join(", ")}`, "warning");
+        } catch { /* no UI */ }
+      }
+      recordSentPrompt(pi, { agentName: agent.name, prompt, source: "agent" });
+      return { systemPrompt: prompt };
     }
 
     // ── Auto-activation (main agent, a default agent is configured) ──
@@ -213,11 +190,17 @@ export function registerHooks(
         try { ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`)); } catch {}
         try { ctx.ui.notify(`Agent "${agent.name}" activated automatically`, "info"); } catch {}
 
-        const finalPromptAuto =
-          agent.useAgentFile
-            ? agent.systemPrompt + (loadAgentFileFromCwd(ctx.cwd) ?? "")
-            : agent.systemPrompt;
-        return { systemPrompt: finalPromptAuto };
+        const { prompt, missingSkills } = composeAgentPrompt(pi, ctx.cwd, agent, {
+          systemPromptOptions: (event as { systemPromptOptions?: unknown }).systemPromptOptions,
+          modelId: ctx.model?.id,
+        });
+        if (missingSkills.length) {
+          try {
+            ctx.ui.notify(`Agent "${agent.name}": unknown skills ignored: ${missingSkills.join(", ")}`, "warning");
+          } catch { /* no UI */ }
+        }
+        recordSentPrompt(pi, { agentName: agent.name, prompt, source: "auto" });
+        return { systemPrompt: prompt };
       }
     }
 

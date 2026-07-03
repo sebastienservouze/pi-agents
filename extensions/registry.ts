@@ -116,6 +116,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
       name,
       description,
       tools: asToolsList(frontmatter.tools),
+      skills: asToolsList(frontmatter.skills),
       model: asString(frontmatter.model),
       thinkingLevel: asString(frontmatter.thinkingLevel),
       systemPrompt: body.trim(),

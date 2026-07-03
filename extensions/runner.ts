@@ -2,7 +2,10 @@
  * Runs an agent in an isolated `pi --mode json` sub-process.
  *
  * Each agent runs in spawn("pi", ["--mode", "json", "-p", "--no-session", ...])
- * with its own model, tools, and system prompt.
+ * with its own model, tools, and system prompt. The system prompt is passed
+ * natively via `--system-prompt` (replaces pi's default prompt without
+ * depending on this extension being loaded in the sub-process), composed with
+ * a delegation notice, an environment block and the current date.
  *
  * The sub-process emits JSON events (message_update, tool_execution_start,
  * tool_execution_end, message_end) parsed in real time to:
@@ -12,9 +15,7 @@
  */
 
 import { spawn } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import { currentDateSnippet, delegationSnippet, environmentSnippet } from "./prompt-build.js";
 import type { AgentConfig, AgentResult, AgentUsage, AgentProgress, AgentProgressCallback } from "./types.js";
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -245,23 +246,26 @@ export async function runAgent(
   onUpdate?: AgentProgressCallback,
 ): Promise<AgentResult> {
   const startTime = Date.now();
-  const finalPrompt = agent.systemPrompt;
+
+  // Composed prompt: agent .md + delegation notice + environment + date.
+  // (Skills are not resolved here: they live in the parent's loader; the
+  // sub-process loads its own if needed.)
+  const finalPrompt =
+    agent.systemPrompt +
+    delegationSnippet(agent.name) +
+    environmentSnippet(cwd, agent.model, agent.tools) +
+    currentDateSnippet();
+
   // ── Build the arguments ──
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
   if (agent.model) args.push("--model", agent.model);
   if (agent.tools?.length) args.push("--tools", agent.tools.join(","));
   if (agent.thinkingLevel) args.push("--thinking", agent.thinkingLevel);
-
-  // The system prompt is written to a temporary file, cleaned up in `finally`.
-  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-agent-"));
-  const tmpFile = path.join(tmpDir, `prompt-${agent.name}.md`);
-  const cleanupTmp = () => {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-    try { fs.rmdirSync(tmpDir); } catch { /* ignore */ }
-  };
+  // Native replacement of the default system prompt — no hook needed in the
+  // sub-process.
+  args.push("--system-prompt", finalPrompt);
 
   try {
-    await fs.promises.writeFile(tmpFile, finalPrompt, "utf-8");
     // The task is the last positional argument
     args.push(task);
 
@@ -296,9 +300,10 @@ export async function runAgent(
         cwd,
         env: {
           ...process.env,
+          // Still set: the hook uses it to disable agent-mode logic
+          // (auto-activation, restore) inside the sub-process.
           PI_DELEGATED_SUBAGENT: "1",
           PI_DELEGATED_SUBAGENT_NAME: agent.name,
-          PI_DELEGATED_AGENT_PROMPT_FILE: tmpFile,
         },
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -387,6 +392,6 @@ export async function runAgent(
 
     return result;
   } finally {
-    cleanupTmp();
+    /* no temp resources to clean up */
   }
 }
