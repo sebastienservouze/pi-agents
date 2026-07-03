@@ -11,6 +11,11 @@
  *       Replaces the system prompt with the agent's, composed with the skills
  *       allow-list, pi's contextFiles, an environment block and the date
  *       (see prompt-build.ts). The sent prompt is recorded for /agent-prompt.
+ *       Also re-applies the tool allow-list on `state.tools` so ctx_* (injected
+ *       by context-mode's `before_agent_start` handler, which fires first
+ *       because npm extensions load before local ones) are stripped — works for
+ *       ALL providers including custom streamSimple transports that bypass
+ *       `before_provider_request` (e.g. pi-anthropic-oauth).
  *
  *   - Auto-activation:
  *       Activates a default agent once per session (system prompt, tools, model,
@@ -19,11 +24,12 @@
  *   - Main agent (normal mode):
  *       No modification — pi handles APPEND_SYSTEM.md.
  *
- * - before_provider_request:
- *       Enforces the active agent's tool allow-list on the payload. The MCP
- *       bridge (context-mode) injects its whole ctx_* family on top of the
- *       frontmatter; here, at the last moment before sending, we keep only the
- *       tools declared in `tools:`. Fail-open.
+ * - before_provider_request (safety net):
+ *       Also enforces the tool allow-list on the provider payload. This is the
+ *       SECOND filtering point — the primary one is `before_agent_start`
+ *       (above), which works for ALL providers. This hook only fires for the
+ *       built-in transport; it stays as a defense-in-depth guard and a fallback
+ *       `recordSentTools` for providers that do call `onPayload`.
  *
  * - context:
  *       Strips the /agent-prompt and /agent-tools viewer messages (display-only
@@ -146,6 +152,24 @@ export function registerHooks(
         } catch { /* no UI */ }
       }
       recordSentPrompt(pi, { agentName: agent.name, prompt, source: "agent" });
+
+      // Re-apply the tool allow-list on `state.tools` so ctx_* (injected by
+      // context-mode's before_agent_start handler, which fires before ours
+      // because npm extensions load before local ones) are stripped. This makes
+      // the filtering work for ALL providers — including custom streamSimple
+      // transports (e.g. pi-anthropic-oauth) that bypass before_provider_request.
+      // Also records the final list so /agent-tools works for every provider.
+      try {
+        const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
+        pi.setActiveTools(toolsToSet);
+        recordSentTools({
+          agentName: agent.name,
+          tools: pi.getActiveTools(),
+          found: true,
+          guardApplied: true,
+        });
+      } catch { /* fail-open */ }
+
       return { systemPrompt: prompt };
     }
 
@@ -164,6 +188,18 @@ export function registerHooks(
         // Apply the agent's tools
         const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
         try { pi.setActiveTools(toolsToSet); } catch { /* fail open */ }
+
+        // Record the filtered tools for /agent-tools — covers providers that
+        // bypass before_provider_request (e.g. custom streamSimple transports
+        // like pi-anthropic-oauth) where the safety-net hook never fires.
+        try {
+          recordSentTools({
+            agentName: agent.name,
+            tools: pi.getActiveTools(),
+            found: true,
+            guardApplied: true,
+          });
+        } catch { /* fail-open */ }
 
         // Apply the thinking level
         if (agent.thinkingLevel) {

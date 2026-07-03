@@ -69,9 +69,13 @@ Activate an agent to take over the current session:
   request (post allow-list enforcement, not just the agent's configured
   `tools:`).
 
-While an agent is active its `tools:` allow-list is enforced on every provider
-request: tools injected by other extensions (e.g. the MCP `ctx_*` family) that
-aren't in the list are stripped before the request goes out.
+While an agent is active its `tools:` allow-list is enforced in
+`before_agent_start` by re-applying it on the session's active tool set. This
+strips tools injected by other extensions (e.g. the MCP `ctx_*` family) that
+aren't in the list, and works for **all** providers — including custom
+`streamSimple` transports (e.g. pi-anthropic-oauth) that bypass the
+`before_provider_request` hook. The hook remains as a defense-in-depth safety
+net.
 
 ## Default agent
 

@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `delegate` now passes the composed prompt natively via `pi --system-prompt`
   instead of writing it to a temporary file.
 
+## [0.1.2] - 2026-07-03
+
+### Fixed
+
+- Tool allow-list (`tools:` frontmatter) is now enforced in `before_agent_start`
+  by re-applying it on `state.tools` after context-mode's `before_agent_start`
+  handler has injected the `ctx_*` family. This makes the filtering work for
+  **all** providers, including custom `streamSimple` transports (e.g.
+  pi-anthropic-oauth) that bypass the `before_provider_request` hook.
+- `/agent-tools` now records and shows the final tool list for every provider,
+  not only those that fire `before_provider_request`.
+
+### Changed
+
+- `before_provider_request` hook repositioned as a defense-in-depth safety net;
+  the primary filtering point is now `before_agent_start`.
+
 ## [0.1.1] - 2025-07-17
 
 ### Fixed
