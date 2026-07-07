@@ -163,6 +163,8 @@ function wrapProjectContext(blocks: string[]): string {
  */
 export function contextFilesSnippet(contextFiles: unknown, cwd: string): string {
   const blocks: string[] = [];
+  const seenPaths = new Set<string>();
+
   if (Array.isArray(contextFiles)) {
     for (const f of contextFiles) {
       if (typeof f === "string" && f.trim()) {
@@ -173,6 +175,7 @@ export function contextFilesSnippet(contextFiles: unknown, cwd: string): string 
         const o = f as { path?: string; filePath?: string; content?: string };
         if (typeof o.content === "string" && o.content.trim()) {
           const p = o.path ?? o.filePath ?? "";
+          if (p) seenPaths.add(p);
           blocks.push(
             `<project_instructions${p ? ` path="${p}"` : ""}>\n${o.content}\n</project_instructions>`,
           );
@@ -180,8 +183,25 @@ export function contextFilesSnippet(contextFiles: unknown, cwd: string): string 
       }
     }
   }
+
+  // Always try to load cwd/AGENTS.md, even when pi already provided contextFiles.
+  // pi's contextFiles may include parent-directory AGENTS.md files but not the
+  // cwd one, and a non-empty array prevents the fallback from ever running.
+  const localPath = path.join(cwd, "AGENTS.md");
+  if (!seenPaths.has(localPath)) {
+    const local = loadAgentFileFromCwd(cwd);
+    if (local) {
+      // loadAgentFileFromCwd already wraps in <project_context>, extract the
+      // inner block to avoid double-wrapping.
+      const innerMatch = local.match(/<project_instructions[^>]*>([\s\S]*?)<\/project_instructions>/);
+      if (innerMatch) {
+        blocks.push(`<project_instructions path="${localPath}">${innerMatch[1]}</project_instructions>`);
+      }
+    }
+  }
+
   if (blocks.length) return wrapProjectContext(blocks);
-  return loadAgentFileFromCwd(cwd) ?? "";
+  return "";
 }
 
 // ─── Delegated sub-agent notice ──────────────────────────────────────────────
