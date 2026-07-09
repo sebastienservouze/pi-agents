@@ -1,12 +1,14 @@
 /**
  * Agent system hooks
  *
- * - before_agent_start:
- *   - Delegated sub-agent (PI_DELEGATED_SUBAGENT=1):
- *       No prompt work here — the runner passes the composed prompt natively
- *       via `--system-prompt`. This hook only guards against agent-mode logic
- *       (auto-activation…) firing inside the sub-process.
+ * Note: delegated sub-agents no longer load this extension at all — the
+ * runner (runner.ts) excludes pi-agents from the sub-session's extensions via
+ * `extensionsOverride` and injects the system prompt/tools directly through
+ * the SDK (`systemPromptOverride`, `tools:`). There is nothing to guard
+ * against here anymore for delegated sub-agents; this file only runs in the
+ * orchestrating (parent) session.
  *
+ * - before_agent_start:
  *   - Active agent (`/agent <name>` mode):
  *       Replaces the system prompt with the agent's, composed with the skills
  *       allow-list, pi's contextFiles, an environment block and the date
@@ -127,13 +129,6 @@ export function registerHooks(
 
   pi.on("before_agent_start", async (event, ctx) => {
     const activeAgentName = getActiveAgentName();
-
-    // ── Delegated sub-agent ──
-    // The runner already passed the composed prompt via `--system-prompt`;
-    // pi applies it natively. Just make sure no agent-mode logic fires here.
-    if (process.env.PI_DELEGATED_SUBAGENT === "1") {
-      return;
-    }
 
     // ── Active agent via /agent <name> ──
     // Full replacement of the system prompt with the agent's (composed).

@@ -1,20 +1,41 @@
 /**
- * Runs an agent in an isolated `pi --mode json` sub-process.
+ * Runs an agent in an isolated in-process SDK session.
  *
- * Each agent runs in spawn("pi", ["--mode", "json", "-p", "--no-session", ...])
- * with its own model, tools, and system prompt. The system prompt is passed
- * natively via `--system-prompt` (replaces pi's default prompt without
- * depending on this extension being loaded in the sub-process), composed with
- * a delegation notice, an environment block and the current date.
+ * Each agent runs in its own `createAgentSession` (in-memory, no session
+ * file), with its own model, tools and system prompt. `pi-agents` itself is
+ * excluded from the sub-session's extensions (no `/agent`, no auto-activation,
+ * no recursive `delegate`) via `extensionsOverride` on the resource loader —
+ * every other extension (context-mode, etc.) is loaded normally so the
+ * delegated agent keeps access to their tools when its frontmatter allows
+ * them. The `tools:` allow-list itself is enforced natively by the SDK
+ * (`CreateAgentSessionOptions.tools`), including for tools registered late by
+ * other extensions (e.g. context-mode's lazily-bootstrapped MCP bridge) — no
+ * custom guard hook is needed.
  *
- * The sub-process emits JSON events (message_update, tool_execution_start,
- * tool_execution_end, message_end) parsed in real time to:
+ * The system prompt is injected natively via `systemPromptOverride` on the
+ * resource loader (replaces pi's default prompt without depending on this
+ * extension being loaded in the sub-session), composed with a delegation
+ * notice, an environment block and the current date.
+ *
+ * The session emits AgentSessionEvent objects (message_update,
+ * tool_execution_start/end, message_end…) consumed in real time via
+ * `session.subscribe()` to:
  *   - Track activity (tools used, thinking, writing)
  *   - Accumulate consumption metrics (tokens, cost)
  *   - Collect the final output
  */
 
-import { spawn } from "node:child_process";
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  type AgentSession,
+  type AgentSessionEvent,
+} from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { getAgentDir } from "./registry.js";
 import { currentDateSnippet, delegationSnippet, environmentSnippet } from "./prompt-build.js";
 import type { AgentConfig, AgentResult, AgentUsage, AgentProgress, AgentProgressCallback } from "./types.js";
 
@@ -34,7 +55,7 @@ export function formatDuration(ms: number): string {
   return `${min}m${sec.toString().padStart(2, "0")}s`;
 }
 
-// ─── JSON stream parsing ──────────────────────────────────────────────────────
+// ─── Event stream processing ───────────────────────────────────────────────────
 
 interface StreamState {
   actions: string[];
@@ -102,26 +123,24 @@ function describeToolArgs(args: unknown): string {
   return `${key}=${str.slice(0, 40)}`;
 }
 
+/**
+ * Processes one AgentSessionEvent from `session.subscribe()`. Same shape and
+ * semantics as the former `pi --mode json` stdout events (message_update,
+ * tool_execution_start/end, message_end) — this is a direct mapping, not a
+ * behavioral change.
+ */
 function processEvent(
-  line: string,
+  event: AgentSessionEvent,
   state: StreamState,
   startTime: number,
   onUpdate?: AgentProgressCallback,
 ): void {
   const elapsed = Date.now() - startTime;
-  if (!line.trim()) return;
-
-  let event: any;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return;
-  }
 
   switch (event.type) {
     // ── Text streaming ──
     case "message_update": {
-      const ame = event.assistantMessageEvent;
+      const ame = event.assistantMessageEvent as { type: string; delta?: string } | undefined;
       if (!ame) return;
 
       // Thinking-phase counter: incremented even after non-thinking content
@@ -150,23 +169,23 @@ function processEvent(
       let actionLine: string;
       switch (ame.type) {
         case "thinking_delta":
-          state.thinkingText += ame.delta;
-          actionLine = "🧠 thinking…";
+          state.thinkingText += ame.delta ?? "";
+          actionLine = "�� thinking…";
           break;
         case "thinking_start":
         case "thinking_end":
-          actionLine = "🧠 thinking…";
+          actionLine = "�� thinking…";
           break;
         case "text_delta":
         case "text_start":
-          actionLine = "💬 writing…";
+          actionLine = "�� writing…";
           break;
         case "toolcall_delta":
         case "toolcall_start":
           actionLine = ""; // hidden: the real tool name arrives in tool_execution_start
           break;
         default:
-          actionLine = "💬 writing…";
+          actionLine = "�� writing…";
       }
 
       if (actionLine && state.actions[state.actions.length - 1] !== actionLine) {
@@ -180,7 +199,7 @@ function processEvent(
     case "tool_execution_start": {
       const { toolName, args } = event;
       const detail = describeToolArgs(args);
-      const actionLine = `🔧 ${toolName}${detail ? " • " + detail : ""}`;
+      const actionLine = `�� ${toolName}${detail ? " • " + detail : ""}`;
       state.actions.push(actionLine);
       state.activeTools.push(actionLine);
       state.toolCount++;
@@ -191,7 +210,7 @@ function processEvent(
     // ── Tool end ──
     case "tool_execution_end": {
       const { toolName, isError } = event;
-      const idx = state.activeTools.findIndex(a => a.includes(`🔧 ${toolName}`));
+      const idx = state.activeTools.findIndex(a => a.includes(`�� ${toolName}`));
       if (idx !== -1) state.activeTools.splice(idx, 1);
       if (isError) state.toolFailCount++;
       state.actions.push(`${isError ? "❌" : "✅"} ${toolName} done`);
@@ -201,7 +220,13 @@ function processEvent(
 
     // ── Final message ──
     case "message_end": {
-      const msg = event.message;
+      const msg = event.message as {
+        role?: string;
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
+        model?: string;
+        errorMessage?: string;
+        content?: Array<{ type: string; text?: string }>;
+      };
       if (!msg || msg.role !== "assistant") return;
 
       if (msg.usage) {
@@ -217,11 +242,11 @@ function processEvent(
       // Reset thinking accumulator for the next message
       state.thinkingText = "";
 
-      for (const part of msg.content) {
-        if (part.type === "text") {
+      for (const part of msg.content ?? []) {
+        if (part.type === "text" && part.text) {
           state.output = state.output ? state.output + "\n\n" + part.text : part.text;
           const truncated = part.text.length > 100 ? `${part.text.slice(0, 100)}…` : part.text;
-          state.actions.push(`💬 ${truncated}`);
+          state.actions.push(`�� ${truncated}`);
           onUpdate?.(snapshot(state, elapsed));
         }
       }
@@ -230,13 +255,26 @@ function processEvent(
   }
 }
 
+// ─── Model resolution ────────────────────────────────────────────────────────
+
+/**
+ * Resolves an agent's `model:` frontmatter value ("provider/id" or bare id)
+ * against a ModelRegistry. Same lookup rules as activation.ts/hook.ts.
+ */
+function resolveModel(registry: ModelRegistry, modelSpec: string | undefined) {
+  if (!modelSpec) return undefined;
+  const slashIdx = modelSpec.indexOf("/");
+  return slashIdx !== -1
+    ? registry.find(modelSpec.slice(0, slashIdx), modelSpec.slice(slashIdx + 1))
+    : registry.getAll().find((m) => m.id === modelSpec);
+}
+
 // ─── Execution ────────────────────────────────────────────────────────────────
 
 const AGENT_TIMEOUT_MS = 600_000; // 10 min
-const KILL_TIMEOUT_MS = 5_000;    // 5s between SIGTERM and SIGKILL
 
 /**
- * Runs an agent in an isolated sub-process.
+ * Runs an agent in an isolated in-process SDK session.
  */
 export async function runAgent(
   cwd: string,
@@ -246,135 +284,126 @@ export async function runAgent(
   onUpdate?: AgentProgressCallback,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+  const agentDir = getAgentDir();
 
   // Composed prompt: agent .md + delegation notice + environment + date.
   // (Skills are not resolved here: they live in the parent's loader; the
-  // sub-process loads its own if needed.)
+  // sub-session loads its own if `useAgentFile`/skills support is added later.)
   const finalPrompt =
     agent.systemPrompt +
     delegationSnippet(agent.name) +
     environmentSnippet(cwd, agent.model, agent.tools) +
     currentDateSnippet();
 
-  // ── Build the arguments ──
-  const args: string[] = ["--mode", "json", "-p", "--no-session"];
-  if (agent.model) args.push("--model", agent.model);
-  if (agent.tools?.length) args.push("--tools", agent.tools.join(","));
-  if (agent.thinkingLevel) args.push("--thinking", agent.thinkingLevel);
-  // Native replacement of the default system prompt — no hook needed in the
-  // sub-process.
-  args.push("--system-prompt", finalPrompt);
+  const result: AgentResult = {
+    agent: agent.name,
+    task,
+    exitCode: 0,
+    output: "",
+    stderr: "",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    model: agent.model,
+  };
+
+  const state: StreamState = {
+    actions: [],
+    activeTools: [],
+    usage: { ...result.usage },
+    output: "",
+    thinkingText: "",
+    hasSeenNonThinking: false,
+    toolCount: 0,
+    toolFailCount: 0,
+    thinkingPhases: 0,
+  };
+
+  let wasAborted = false;
+  let session: AgentSession | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let tickInterval: ReturnType<typeof setInterval> | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
 
   try {
-    // The task is the last positional argument
-    args.push(task);
+    // ── Resource loader: exclude pi-agents, keep every other extension ──
+    // (context-mode, etc.) so the delegated agent gets their tools if its
+    // frontmatter `tools:` allows them. Excluding pi-agents avoids its
+    // /agent + auto-activation + delegate machinery firing recursively
+    // inside the sub-session and overwriting the systemPrompt/tools we set
+    // here.
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      systemPromptOverride: () => finalPrompt,
+      extensionsOverride: (base) => ({
+        ...base,
+        extensions: base.extensions.filter(
+          (ext) => !ext.resolvedPath.includes("/pi-agents/"),
+        ),
+      }),
+    });
+    await loader.reload();
 
-    // ── Initial state ──
-    const result: AgentResult = {
-      agent: agent.name,
-      task,
-      exitCode: 0,
-      output: "",
-      stderr: "",
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
-      model: agent.model,
-    };
+    const authStorage = AuthStorage.create();
+    const modelRegistry = ModelRegistry.create(authStorage);
+    const resolvedModel = resolveModel(modelRegistry, agent.model);
 
-    const state: StreamState = {
-      actions: [],
-      activeTools: [],
-      usage: { ...result.usage },
-      output: "",
-      thinkingText: "",
-      hasSeenNonThinking: false,
-      toolCount: 0,
-      toolFailCount: 0,
-      thinkingPhases: 0,
-    };
+    const { session: createdSession } = await createAgentSession({
+      cwd,
+      agentDir,
+      resourceLoader: loader,
+      // Native allow-list enforcement — works even for tools registered late
+      // by other extensions (e.g. context-mode's MCP bridge, bootstrapped
+      // lazily from its own before_agent_start). No custom guard needed.
+      tools: agent.tools?.length ? agent.tools : undefined,
+      model: resolvedModel,
+      thinkingLevel: agent.thinkingLevel as ThinkingLevel | undefined,
+      sessionManager: SessionManager.inMemory(),
+      authStorage,
+      modelRegistry,
+    });
+    session = createdSession;
 
-    let wasAborted = false;
-
-    // ── Spawn ──
-    const exitCode = await new Promise<number>((resolve) => {
-      const proc = spawn("pi", args, {
-        cwd,
-        env: {
-          ...process.env,
-          // Still set: the hook uses it to disable agent-mode logic
-          // (auto-activation, restore) inside the sub-process.
-          PI_DELEGATED_SUBAGENT: "1",
-          PI_DELEGATED_SUBAGENT_NAME: agent.name,
-        },
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-      // Periodic tick: forces a refresh every second so the displayed duration
-      // keeps incrementing even without an event from the sub-agent.
-      const tickInterval = onUpdate
-        ? setInterval(() => {
-            onUpdate(snapshot(state, Date.now() - startTime));
-          }, 1000)
-        : null;
-
-      let buffer = "";
-
-      proc.stdout.on("data", (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          processEvent(line, state, startTime, onUpdate);
-        }
-      });
-
-      proc.stderr.on("data", (data: Buffer) => {
-        result.stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        if (buffer.trim()) processEvent(buffer, state, startTime, onUpdate);
-        resolve(code ?? 0);
-      });
-
-      proc.on("error", () => resolve(1));
-
-      // ── Timeout ──
-      const timeoutId = setTimeout(() => {
-        wasAborted = true;
-        if (tickInterval) clearInterval(tickInterval);
-        proc.kill("SIGTERM");
-        setTimeout(() => {
-          if (!proc.killed) proc.kill("SIGKILL");
-        }, KILL_TIMEOUT_MS);
-      }, AGENT_TIMEOUT_MS);
-
-      // ── AbortSignal ──
-      const onAbort = () => {
-        wasAborted = true;
-        if (tickInterval) clearInterval(tickInterval);
-        clearTimeout(timeoutId);
-        proc.kill("SIGTERM");
-        setTimeout(() => {
-          if (!proc.killed) proc.kill("SIGKILL");
-        }, KILL_TIMEOUT_MS);
-      };
-
-      if (signal?.aborted) {
-        onAbort();
-      } else {
-        signal?.addEventListener("abort", onAbort, { once: true });
-      }
-
-      // Cleanup when the process ends
-      proc.on("close", () => {
-        if (tickInterval) clearInterval(tickInterval);
-        clearTimeout(timeoutId);
-      });
+    // ── Subscribe: map SDK events to the same StreamState as before ──
+    unsubscribe = session.subscribe((event) => {
+      processEvent(event, state, startTime, onUpdate);
     });
 
+    // Periodic tick: forces a refresh every second so the displayed duration
+    // keeps incrementing even without an event from the sub-agent.
+    if (onUpdate) {
+      tickInterval = setInterval(() => {
+        onUpdate(snapshot(state, Date.now() - startTime));
+      }, 1000);
+    }
+
+    // ── Timeout / abort plumbing ──
+    const abortSession = () => {
+      wasAborted = true;
+      if (tickInterval) clearInterval(tickInterval);
+      if (timeoutId) clearTimeout(timeoutId);
+      void session?.abort();
+    };
+
+    timeoutId = setTimeout(abortSession, AGENT_TIMEOUT_MS);
+
+    onAbort = abortSession;
+    if (signal?.aborted) {
+      onAbort();
+    } else {
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }
+
+    // ── Run the prompt (equivalent of `pi --mode json -p --no-session <task>`) ──
+    if (!wasAborted) {
+      await session.prompt(task);
+    }
+
+    if (tickInterval) clearInterval(tickInterval);
+    if (timeoutId) clearTimeout(timeoutId);
+
     // ── Finalization ──
-    result.exitCode = exitCode;
+    result.exitCode = wasAborted ? 1 : 0;
     result.output = state.output;
     result.usage = { ...state.usage };
     result.model = state.model || result.model;
@@ -392,6 +421,10 @@ export async function runAgent(
 
     return result;
   } finally {
-    /* no temp resources to clean up */
+    if (tickInterval) clearInterval(tickInterval);
+    if (timeoutId) clearTimeout(timeoutId);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+    unsubscribe?.();
+    session?.dispose();
   }
 }
