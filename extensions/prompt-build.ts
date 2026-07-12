@@ -89,31 +89,44 @@ interface SkillLike {
   name?: string;
   description?: string;
   filePath?: string;
+  sourceInfo?: { scope?: string };
 }
 
 /**
  * Renders the skills selected by the agent's frontmatter `skills:` allow-list,
  * resolved against the skills pi actually loaded (systemPromptOptions.skills).
- * No `skills:` in the frontmatter → no skills block (explicit opt-in).
+ *
+ * - `skills:` absent (undefined) → auto-include ALL available skills.
+ * - `skills:` with a list → filter: only matched names are included.
  */
 export function skillsSnippet(
   wanted: string[] | undefined,
   available: unknown,
 ): { snippet: string; missing: string[] } {
-  if (!wanted?.length) return { snippet: "", missing: [] };
-
   const list: SkillLike[] = Array.isArray(available)
     ? (available.filter((s) => s && typeof s === "object") as SkillLike[])
     : [];
+  if (!list.length) return { snippet: "", missing: [] };
+
   const byName = new Map(list.map((s) => [s.name, s]));
 
-  const found: SkillLike[] = [];
+  let found: SkillLike[];
   const missing: string[] = [];
-  for (const name of wanted) {
-    const s = byName.get(name);
-    if (s) found.push(s);
-    else missing.push(name);
+
+  if (wanted?.length) {
+    // Explicit allow-list: resolve each name against loaded skills.
+    found = [];
+    for (const name of wanted) {
+      const s = byName.get(name);
+      if (s) found.push(s);
+      else missing.push(name);
+    }
+  } else {
+    // No `skills:` in frontmatter → auto-include project skills only
+    // (scope === "project"), not global/user skills.
+    found = list.filter((s) => s.sourceInfo?.scope === "project");
   }
+
   if (!found.length) return { snippet: "", missing };
 
   const entries = found
