@@ -44,13 +44,13 @@ references. Do not modify anything.
 | `name` | yes | Unique agent name (used by `/agent` and `delegate`). |
 | `description` | yes | Shown in selectors and delegation guidelines. |
 | `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ a sensible default set. |
-| `skills` | no | Allow-list of skill names, as a YAML list or a comma-separated string. Only these are advertised in the agent's system prompt. Omitted ⇒ no skills block. |
+| `skills` | no | Skill names to advertise, as a YAML list or a comma-separated string. Project-local skills are always added and de-duplicated by name. Omitted ⇒ project-local skills only. |
 | `model` | no | `provider/model` or a bare model id. |
 | `thinkingLevel` | no | Thinking level passed to the agent. |
 | `useAgentFile` | no | `true` to append the current directory's `AGENTS.md` to the system prompt. |
 
 The body (everything after the frontmatter) becomes the agent's system prompt. For
-agent mode (`/agent`, auto-activation), it is composed with the skills allow-list,
+agent mode (`/agent`, auto-activation), it is composed with the selected and project-local skills,
 pi's `contextFiles`, an environment block and the current date. Use `/agent-prompt`
 to inspect the prompt actually sent.
 

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Project-local skills are always added to an agent's frontmatter `skills:`
+  selection and de-duplicated by name.
 - Agent system prompts (agent mode and delegation) are now composed with the
   skills allow-list, pi's `contextFiles`, an environment block and the current
   date instead of using the raw `.md` body.

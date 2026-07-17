@@ -6,8 +6,8 @@ export interface AgentConfig {
   name: string;
   description: string;
   tools?: string[];
-  /** Allow-list of skill names (frontmatter `skills:`). Only these skills are
-   * advertised in the agent's system prompt. Absent → auto-include all available skills. */
+  /** Skill names selected in frontmatter. Project-local skills are always
+   * advertised as well; absent → project-local skills only. */
   skills?: string[];
   model?: string;
   thinkingLevel?: string;

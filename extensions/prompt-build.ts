@@ -4,7 +4,7 @@
  * The final prompt is assembled as:
  *
  *   agent.systemPrompt                (stable — cache-friendly prefix)
- *   + <available_skills>              (skills selected via frontmatter `skills:`)
+ *   + <available_skills>              (frontmatter skills + project-local skills)
  *   + <project_context>               (pi's contextFiles when `useAgentFile: true`)
  *   + <environment>                   (cwd, platform, model, effective tools, git)
  *   + <current_date>                  (volatile — kept last for prompt caching)
@@ -93,11 +93,13 @@ interface SkillLike {
 }
 
 /**
- * Renders the skills selected by the agent's frontmatter `skills:` allow-list,
- * resolved against the skills pi actually loaded (systemPromptOptions.skills).
+ * Renders the agent's frontmatter `skills:` selection plus every project-local
+ * skill, resolved against the skills pi actually loaded
+ * (systemPromptOptions.skills). Skills are de-duplicated by name.
  *
- * - `skills:` absent (undefined) → auto-include ALL available skills.
- * - `skills:` with a list → filter: only matched names are included.
+ * - `skills:` absent (undefined) → include project-local skills only.
+ * - `skills:` with a list → include matched skills, then any remaining
+ *   project-local skills.
  */
 export function skillsSnippet(
   wanted: string[] | undefined,
@@ -108,25 +110,36 @@ export function skillsSnippet(
     : [];
   if (!list.length) return { snippet: "", missing: [] };
 
-  const byName = new Map(list.map((s) => [s.name, s]));
-
-  let found: SkillLike[];
-  const missing: string[] = [];
-
-  if (wanted?.length) {
-    // Explicit allow-list: resolve each name against loaded skills.
-    found = [];
-    for (const name of wanted) {
-      const s = byName.get(name);
-      if (s) found.push(s);
-      else missing.push(name);
+  const byName = new Map<string, SkillLike>();
+  const projectByName = new Map<string, SkillLike>();
+  for (const skill of list) {
+    if (typeof skill.name !== "string") continue;
+    byName.set(skill.name, skill);
+    if (skill.sourceInfo?.scope === "project") {
+      projectByName.set(skill.name, skill);
     }
-  } else {
-    // No `skills:` in frontmatter → auto-include project skills only
-    // (scope === "project"), not global/user skills.
-    found = list.filter((s) => s.sourceInfo?.scope === "project");
   }
 
+  const foundByName = new Map<string, SkillLike>();
+  const missing: string[] = [];
+  const seenWanted = new Set<string>();
+
+  for (const name of wanted ?? []) {
+    if (seenWanted.has(name)) continue;
+    seenWanted.add(name);
+
+    // Prefer the project-local definition if pi ever exposes a name collision.
+    const skill = projectByName.get(name) ?? byName.get(name);
+    if (skill) foundByName.set(name, skill);
+    else missing.push(name);
+  }
+
+  // Project-local skills are always available, even with an explicit list.
+  for (const [name, skill] of projectByName) {
+    if (!foundByName.has(name)) foundByName.set(name, skill);
+  }
+
+  const found = [...foundByName.values()];
   if (!found.length) return { snippet: "", missing };
 
   const entries = found
