@@ -1,10 +1,9 @@
 /**
- * Discovery and loading of agents from .md files
+ * Discovery, parsing and loading of agents from:
  * - .pi/agents/*.md (project)
  * - ~/.pi/agent/agents/*.md (global)
  *
  * Project agents override user agents on name conflict.
- * All configuration comes from the YAML frontmatter of the .md files.
  */
 
 import * as fs from "node:fs";
@@ -16,11 +15,30 @@ import type { AgentConfig } from "./types.js";
 /** Default tools applied when an agent declares no `tools:` in its frontmatter. */
 export const DEFAULT_AGENT_TOOLS = ["read", "grep", "find", "ls", "bash", "ask_user_question"];
 
-// ─── Frontmatter coercion ─────────────────────────────────────────────────────
-// The YAML parser may return strings, booleans or arrays depending on how a
-// field is written. These helpers normalize each field so the loader tolerates
-// both `tools: a, b` and `tools: [a, b]`, and both `useAgentFile: true` and
-// `useAgentFile: "true"`.
+export const AGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+export const AGENT_FRONTMATTER_FIELDS = new Set([
+  "name",
+  "description",
+  "tools",
+  "skills",
+  "model",
+  "thinkingLevel",
+  "useAgentFile",
+]);
+export const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+export interface AgentDiagnostic {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+}
+
+export interface ParsedAgentMarkdown {
+  agent?: AgentConfig;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  diagnostics: AgentDiagnostic[];
+}
 
 /** Returns a trimmed non-empty string, or undefined. */
 function asString(v: unknown): string | undefined {
@@ -29,49 +47,197 @@ function asString(v: unknown): string | undefined {
   return t.length ? t : undefined;
 }
 
-/** Accepts a YAML list (`[a, b]`) or a comma-separated string (`a, b`). */
-function asToolsList(v: unknown): string[] | undefined {
+/** Accepts a YAML list or a comma-separated string, matching loader semantics. */
+function asList(
+  value: unknown,
+  field: "tools" | "skills",
+  diagnostics: AgentDiagnostic[],
+): string[] | undefined {
+  if (value === undefined) return undefined;
+
   let list: string[];
-  if (Array.isArray(v)) {
-    list = v.map((t) => String(t).trim());
-  } else if (typeof v === "string") {
-    list = v.split(",").map((t) => t.trim());
+  if (Array.isArray(value)) {
+    if (value.some((item) => typeof item !== "string")) {
+      diagnostics.push({
+        severity: "error",
+        code: `invalid_${field}`,
+        message: `"${field}" must contain only strings`,
+      });
+    }
+    list = value.map((item) => String(item).trim());
+  } else if (typeof value === "string") {
+    list = value.split(",").map((item) => item.trim());
   } else {
+    diagnostics.push({
+      severity: "error",
+      code: `invalid_${field}`,
+      message: `"${field}" must be a YAML list or a comma-separated string`,
+    });
     return undefined;
   }
+
   const filtered = list.filter(Boolean);
+  const duplicates = [...new Set(filtered.filter((item, index) => filtered.indexOf(item) !== index))];
+  if (duplicates.length) {
+    diagnostics.push({
+      severity: "warning",
+      code: `duplicate_${field}`,
+      message: `Duplicate ${field}: ${duplicates.join(", ")}`,
+    });
+  }
   return filtered.length ? filtered : undefined;
 }
 
-/** Accepts a real boolean or the string "true". */
-function asBool(v: unknown): boolean {
-  return v === true || v === "true";
+/** Accepts the loader's boolean forms while diagnosing invalid values. */
+function asBool(value: unknown, diagnostics: AgentDiagnostic[]): boolean {
+  if (value === undefined || value === false || value === "false") return false;
+  if (value === true || value === "true") return true;
+  diagnostics.push({
+    severity: "error",
+    code: "invalid_use_agent_file",
+    message: '"useAgentFile" must be true or false',
+  });
+  return false;
+}
+
+/**
+ * Parses one agent definition. Discovery and architect validation both use this
+ * function so their frontmatter semantics cannot drift apart.
+ *
+ * `agent` is returned whenever the loader's two required fields are present,
+ * even if stricter diagnostics exist. Discovery therefore remains tolerant;
+ * callers such as agent_validate decide whether diagnostics are fatal.
+ */
+export function parseAgentMarkdown(
+  content: string,
+  source: "user" | "project",
+  filePath: string,
+): ParsedAgentMarkdown {
+  const diagnostics: AgentDiagnostic[] = [];
+  let frontmatter: Record<string, unknown> = {};
+  let body = "";
+
+  try {
+    const parsed = parseFrontmatter<Record<string, unknown>>(content);
+    frontmatter = parsed.frontmatter;
+    body = parsed.body;
+  } catch (error) {
+    diagnostics.push({
+      severity: "error",
+      code: "invalid_frontmatter",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { frontmatter, body, diagnostics };
+  }
+
+  for (const field of Object.keys(frontmatter)) {
+    if (!AGENT_FRONTMATTER_FIELDS.has(field)) {
+      diagnostics.push({
+        severity: "error",
+        code: "unknown_field",
+        message: `Unknown frontmatter field: ${field}`,
+      });
+    }
+  }
+
+  const name = asString(frontmatter.name);
+  const description = asString(frontmatter.description);
+  const tools = asList(frontmatter.tools, "tools", diagnostics);
+  const skills = asList(frontmatter.skills, "skills", diagnostics);
+  const model = asString(frontmatter.model);
+  const thinkingLevel = asString(frontmatter.thinkingLevel);
+  const systemPrompt = body.trim();
+
+  if (!name) {
+    diagnostics.push({ severity: "error", code: "missing_name", message: 'Required field "name" is missing or empty' });
+  } else {
+    if (!AGENT_NAME_PATTERN.test(name)) {
+      diagnostics.push({
+        severity: "error",
+        code: "invalid_name",
+        message: `Agent name must match ${AGENT_NAME_PATTERN}`,
+      });
+    }
+    const expectedName = path.basename(filePath, path.extname(filePath));
+    if (expectedName !== name) {
+      diagnostics.push({
+        severity: "error",
+        code: "filename_mismatch",
+        message: `Frontmatter name "${name}" does not match filename "${expectedName}.md"`,
+      });
+    }
+  }
+
+  if (!description) {
+    diagnostics.push({
+      severity: "error",
+      code: "missing_description",
+      message: 'Required field "description" is missing or empty',
+    });
+  }
+  if (!systemPrompt) {
+    diagnostics.push({ severity: "error", code: "empty_prompt", message: "System prompt body is empty" });
+  }
+  if (frontmatter.model !== undefined && !model) {
+    diagnostics.push({ severity: "error", code: "invalid_model", message: '"model" must be a non-empty string' });
+  }
+  if (frontmatter.thinkingLevel !== undefined && !thinkingLevel) {
+    diagnostics.push({
+      severity: "error",
+      code: "invalid_thinking_level",
+      message: '"thinkingLevel" must be a non-empty string',
+    });
+  } else if (thinkingLevel && !THINKING_LEVELS.has(thinkingLevel)) {
+    diagnostics.push({
+      severity: "error",
+      code: "invalid_thinking_level",
+      message: `Unknown thinkingLevel "${thinkingLevel}"; expected one of: ${[...THINKING_LEVELS].join(", ")}`,
+    });
+  }
+
+  const useAgentFile = asBool(frontmatter.useAgentFile, diagnostics);
+  const agent = name && description
+    ? {
+        name,
+        description,
+        tools,
+        skills,
+        model,
+        thinkingLevel,
+        systemPrompt,
+        source,
+        filePath,
+        useAgentFile,
+      }
+    : undefined;
+
+  return { agent, frontmatter, body, diagnostics };
 }
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
 
-const CACHE_TTL_MS = 30_000; // 30 seconds
-
-interface CacheEntry {
-  agents: AgentConfig[];
-  timestamp: number;
-}
-
+const CACHE_TTL_MS = 30_000;
+interface CacheEntry { agents: AgentConfig[]; timestamp: number }
 const _agentCache = new Map<string, CacheEntry>();
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Returns the global agents directory.
- */
-export function getAgentDir(): string {
-  const envDir = process.env.PI_CODING_AGENT_DIR;
-  return envDir ?? path.join(os.homedir(), ".pi", "agent");
+/** Clear discovery results after an agent file is written. */
+export function invalidateAgentCache(): void {
+  _agentCache.clear();
 }
 
-/**
- * Loads agents from a directory containing .md files.
- */
+/** Returns the global pi agent directory. */
+export function getAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+}
+
+/** Exact directories used for one cwd. */
+export function getAgentDirectories(cwd: string): { user: string; project: string } {
+  return {
+    user: path.join(getAgentDir(), "agents"),
+    project: path.join(cwd, ".pi", "agents"),
+  };
+}
+
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
   if (!fs.existsSync(dir)) return [];
 
@@ -83,82 +249,37 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
   }
 
   const agents: AgentConfig[] = [];
-
   for (const entry of entries) {
     if (!entry.name.endsWith(".md")) continue;
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
 
     const filePath = path.join(dir, entry.name);
-    let content: string;
     try {
-      content = fs.readFileSync(filePath, "utf-8");
+      const parsed = parseAgentMarkdown(fs.readFileSync(filePath, "utf-8"), source, filePath);
+      if (parsed.agent) agents.push(parsed.agent);
     } catch {
-      continue;
+      // Discovery is intentionally fail-open per file.
     }
-
-    let frontmatter: Record<string, unknown>;
-    let body: string;
-    try {
-      const parsed = parseFrontmatter<Record<string, unknown>>(content);
-      frontmatter = parsed.frontmatter;
-      body = parsed.body;
-    } catch {
-      continue;
-    }
-
-    const name = asString(frontmatter.name);
-    const description = asString(frontmatter.description);
-    if (!name || !description) {
-      continue;
-    }
-
-    agents.push({
-      name,
-      description,
-      tools: asToolsList(frontmatter.tools),
-      skills: asToolsList(frontmatter.skills),
-      model: asString(frontmatter.model),
-      thinkingLevel: asString(frontmatter.thinkingLevel),
-      systemPrompt: body.trim(),
-      source,
-      filePath,
-      useAgentFile: asBool(frontmatter.useAgentFile),
-    });
   }
-
   return agents;
 }
 
-/**
- * Discovers all available agents (user + project).
- * Project overrides global on name conflict.
- */
+/** Discovers all available agents. Project definitions override global ones. */
 export function discoverAgents(cwd: string): AgentConfig[] {
   const cached = _agentCache.get(cwd);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.agents;
-  }
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.agents;
 
-  const userDir = path.join(getAgentDir(), "agents");
-  const projectDir = path.join(cwd, ".pi", "agents");
-
-  const userAgents = loadAgentsFromDir(userDir, "user");
-  const projectAgents = loadAgentsFromDir(projectDir, "project");
-
-  // Project overrides user on name conflict
+  const dirs = getAgentDirectories(cwd);
   const map = new Map<string, AgentConfig>();
-  for (const a of userAgents) map.set(a.name, a);
-  for (const a of projectAgents) map.set(a.name, a);
+  for (const agent of loadAgentsFromDir(dirs.user, "user")) map.set(agent.name, agent);
+  for (const agent of loadAgentsFromDir(dirs.project, "project")) map.set(agent.name, agent);
 
-  const agents = Array.from(map.values());
-
+  const agents = [...map.values()];
   _agentCache.set(cwd, { agents, timestamp: Date.now() });
   return agents;
 }
 
-/**
- * Finds an agent by name.
- */
+/** Finds an agent by exact name. */
 export function findAgent(cwd: string, name: string): AgentConfig | undefined {
-  return discoverAgents(cwd).find((a) => a.name === name);
+  return discoverAgents(cwd).find((agent) => agent.name === name);
 }

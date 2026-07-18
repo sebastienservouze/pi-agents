@@ -13,6 +13,19 @@ Agents are defined in `.md` files (YAML frontmatter + system prompt). The extens
 pi install npm:@nerisma/pi-agents
 ```
 
+Installation also deploys the bundled `agent-architect` to
+`~/.pi/agent/agents/agent-architect.md`. Its `model` frontmatter is built from
+`defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json`; when either
+setting is absent, the field is omitted so pi keeps its normal model fallback.
+An existing agent is backed up first as `agent-architect-old` (without `.md`, so
+it is not discovered as another agent).
+
+Activate it with:
+
+```text
+/agent agent-architect
+```
+
 ## Agent files
 
 Agents are discovered from two locations (project overrides global on name conflict):
@@ -43,7 +56,7 @@ references. Do not modify anything.
 |----------------|----------|-------------|
 | `name` | yes | Unique agent name (used by `/agent` and `delegate`). |
 | `description` | yes | Shown in selectors and delegation guidelines. |
-| `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ a sensible default set. |
+| `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ defaults including `bash`; declare tools explicitly for least privilege. |
 | `skills` | no | Skill names to advertise, as a YAML list or a comma-separated string. Project-local skills are always added and de-duplicated by name. Omitted ⇒ project-local skills only. |
 | `model` | no | `provider/model` or a bare model id. |
 | `thinkingLevel` | no | Thinking level passed to the agent. |
@@ -53,6 +66,62 @@ The body (everything after the frontmatter) becomes the agent's system prompt. F
 agent mode (`/agent`, auto-activation), it is composed with the selected and project-local skills,
 pi's `contextFiles`, an environment block and the current date. Use `/agent-prompt`
 to inspect the prompt actually sent.
+
+## Agent architect tools
+
+The extension registers three deterministic tools for agents that design or maintain
+`pi-agents` definitions. They are inactive in normal sessions; add them to an agent's
+`tools:` allow-list when needed.
+
+### `agent_capabilities`
+
+Lists the tools, authenticated models, loaded skills, and agents available in the
+current pi runtime. Results can be filtered by category or name. This is the source
+of truth for capability names; newly installed extensions appear only after pi is
+reloaded.
+
+```text
+agent_capabilities category=models
+agent_capabilities category=tools query=web
+```
+
+### `agent_validate`
+
+Validates complete candidate Markdown without writing it:
+
+- frontmatter syntax, recognized fields, required values, filename and agent name;
+- tools, skills, model authentication, and thinking level;
+- global/project shadowing and existing-target diff;
+- empty prompts, duplicate entries, and implicit default tools.
+
+```text
+agent_validate scope=project name=reviewer markdown="<complete agent Markdown>"
+```
+
+Errors are blocking. Warnings describe inherited defaults or shadowing. Validation
+of an existing target returns `existingSha256` for concurrency-safe saving.
+
+### `agent_save`
+
+Validates again and atomically writes only to one of the two supported locations:
+
+- `~/.pi/agent/agents/<name>.md`
+- `<cwd>/.pi/agents/<name>.md`
+
+It derives the path from `scope` and `name`, refuses symlink targets, never deletes
+agent files, and requires an interactive confirmation before every write. Overwriting
+also requires the hash returned by `agent_validate` and displays the exact diff.
+
+```text
+agent_save scope=project name=reviewer markdown="<validated Markdown>"
+agent_save scope=project name=reviewer markdown="<validated Markdown>" expectedSha256=<hash>
+```
+
+The intended architect workflow is:
+
+```text
+agent_capabilities → design approval → agent_validate → agent_save
+```
 
 ## Agent mode
 

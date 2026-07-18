@@ -5,7 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-18
+
+### Added
+
+- Bundled `agent-architect`, automatically deployed during installation with
+  pi's configured default provider/model.
+- Existing `agent-architect.md` files are backed up as `agent-architect-old`
+  before deployment.
+- Deterministic architect tools for capability discovery, validation and safe
+  agent saving.
+
+## [0.1.4] - 2026-07-18
 
 ### Added
 
