@@ -38,7 +38,7 @@
  *       chat messages) from the LLM context.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { findAgent, DEFAULT_AGENT_TOOLS } from "./registry.js";
 import { applyAgent, readPersistedAgent } from "./activation.js";
 import { composeAgentPrompt } from "./prompt-build.js";
@@ -89,12 +89,34 @@ export function registerHooks(
   // once so a silent bypass doesn't go unnoticed.
   let warnedGuardBypass = false;
 
+  async function activateDefaultAgent(ctx: ExtensionContext): Promise<void> {
+    const agentName = options?.autoActivateAgentName;
+    if (!agentName || autoActivationAttempted) return;
+    autoActivationAttempted = true;
+
+    const agent = findAgent(ctx.cwd, agentName);
+    if (!agent?.systemPrompt) return;
+
+    try {
+      const state = await applyAgent(pi, ctx, agent, null);
+      options?.setActiveAgentState?.(state);
+      process.env.PI_ACTIVE_AGENT = agent.name;
+      try { ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`)); } catch {}
+      try { ctx.ui.notify(`Agent "${agent.name}" activated automatically`, "info"); } catch {}
+    } catch {
+      // fail-open: use Pi's default session settings
+    }
+  }
+
   // Restore the session's active agent when an existing session is loaded
   // (reload/resume/fork, or startup with a non-empty session). A fresh session
   // has no record, so nothing is restored and the default auto-activation
   // applies as usual. A persisted "off" is respected.
   pi.on("session_start", async (event, ctx) => {
-    if (event.reason === "new") return; // brand-new session: nothing to restore
+    if (event.reason === "new") {
+      await activateDefaultAgent(ctx);
+      return;
+    }
 
     let record: { name: string | null } | undefined;
     try {
@@ -102,7 +124,10 @@ export function registerHooks(
     } catch {
       return; // fail-open: no restore
     }
-    if (!record) return; // no prior intent → let default auto-activation handle it
+    if (!record) {
+      await activateDefaultAgent(ctx);
+      return;
+    }
 
     // Explicit "off": keep the session deactivated and stop the default from
     // coming back next turn.
@@ -113,7 +138,10 @@ export function registerHooks(
 
     // The agent no longer exists → fall back to the default auto-activation.
     const agent = findAgent(ctx.cwd, record.name);
-    if (!agent?.systemPrompt) return;
+    if (!agent?.systemPrompt) {
+      await activateDefaultAgent(ctx);
+      return;
+    }
 
     // Re-apply it and record the state. Setting the state makes before_agent_start
     // take the "active agent" branch, which naturally skips auto-activation.
@@ -166,78 +194,6 @@ export function registerHooks(
       } catch { /* fail-open */ }
 
       return { systemPrompt: prompt };
-    }
-
-    // ── Auto-activation (main agent, a default agent is configured) ──
-    const { autoActivateAgentName, setActiveAgentState } = options ?? {};
-    if (autoActivateAgentName && !autoActivationAttempted) {
-      autoActivationAttempted = true;
-      const agent = findAgent(ctx.cwd, autoActivateAgentName);
-      if (agent?.systemPrompt) {
-        // Capture the ORIGINAL state before mutating anything, so `/agent off`
-        // can restore the true defaults rather than the agent's own settings.
-        const savedTools = pi.getActiveTools();
-        const savedModelId = ctx.model?.id;
-        const savedThinkingLevel = pi.getThinkingLevel();
-
-        // Apply the agent's tools
-        const toolsToSet = agent.tools?.length ? agent.tools : DEFAULT_AGENT_TOOLS;
-        try { pi.setActiveTools(toolsToSet); } catch { /* fail open */ }
-
-        // Record the filtered tools for /agent-tools — covers providers that
-        // bypass before_provider_request (e.g. custom streamSimple transports
-        // like pi-anthropic-oauth) where the safety-net hook never fires.
-        try {
-          recordSentTools({
-            agentName: agent.name,
-            tools: pi.getActiveTools(),
-            found: true,
-            guardApplied: true,
-          });
-        } catch { /* fail-open */ }
-
-        // Apply the thinking level
-        if (agent.thinkingLevel) {
-          try { pi.setThinkingLevel(agent.thinkingLevel as any); } catch { /* fail open */ }
-        }
-
-        // Apply the model
-        if (agent.model) {
-          try {
-            const slashIdx = agent.model.indexOf("/");
-            const model = slashIdx !== -1
-              ? ctx.modelRegistry.find(agent.model.slice(0, slashIdx), agent.model.slice(slashIdx + 1))
-              : ctx.modelRegistry.getAll().find((m: any) => m.id === agent.model);
-            if (model) await pi.setModel(model);
-          } catch { /* fail open */ }
-        }
-
-        // Record the original state so before_provider_request filters tools and
-        // `/agent off` restores the defaults.
-        if (setActiveAgentState) {
-          setActiveAgentState({
-            name: agent.name,
-            savedTools,
-            savedModelId,
-            savedThinkingLevel,
-          });
-        }
-        process.env.PI_ACTIVE_AGENT = agent.name;
-        try { ctx.ui.setStatus("agent", ctx.ui.theme.fg("accent", `Agent: ${agent.name}`)); } catch {}
-        try { ctx.ui.notify(`Agent "${agent.name}" activated automatically`, "info"); } catch {}
-
-        const { prompt, missingSkills } = composeAgentPrompt(pi, ctx.cwd, agent, {
-          systemPromptOptions: (event as { systemPromptOptions?: unknown }).systemPromptOptions,
-          modelId: ctx.model?.id,
-        });
-        if (missingSkills.length) {
-          try {
-            ctx.ui.notify(`Agent "${agent.name}": unknown skills ignored: ${missingSkills.join(", ")}`, "warning");
-          } catch { /* no UI */ }
-        }
-        recordSentPrompt(pi, { agentName: agent.name, prompt, source: "auto" });
-        return { systemPrompt: prompt };
-      }
     }
 
     // ── Main agent (no auto-activation) ──
