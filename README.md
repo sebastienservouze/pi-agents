@@ -135,6 +135,28 @@ agent_capabilities → design approval → write draft once → agent_save
                                       ↘ edit draft and retry on validation error
 ```
 
+## Session review tools
+
+Three read-only tools support deterministic audits of persisted pi JSONL sessions. They
+stream files, follow the active `id`/`parentId` branch, propagate cancellation, and are
+inactive unless an agent explicitly lists them:
+
+- `session_find agentName=<name>` finds matching sessions under
+  `~/.pi/agent/sessions`, newest valid entry first; `excludePath` avoids selecting
+  the current audit session.
+- `session_stats path=<file> agentName=<name>` reports tool calls, tokens, cost,
+  models and compact evidence landmarks (requests, finals, failures, actions,
+  confirmations, compactages and largest entries). Set `scope` to `active-branch`
+  or `whole-tree` when an agent segment is not wanted.
+- `session_extract path=<file> agentName=<name>` defaults to detailed evidence.
+  Use `view=outline` for a content-free index, `fields` for projection, and
+  `entryIds` with `context` for neighbouring, parent and matching tool-call/result
+  evidence. `totalChars` imposes a global output budget; coverage and the next cursor
+  are always returned. Thinking text and obvious credentials are omitted.
+
+Efficient review flow: `session_stats` landmarks → optional `session_extract`
+outline → targeted `session_extract` evidence with causal context.
+
 ## Agent mode
 
 Activate an agent to take over the current session:
