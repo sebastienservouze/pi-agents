@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,13 +59,15 @@ test("validates and atomically saves a multi-file skill while preserving untouch
     const created = await execute("skill_save", { scope: "project", name: "example-skill" });
     assert.equal(created.details.verified, true);
     assert.equal(readFileSync(join(target, "references", "guide.md"), "utf8"), "# Guide\n");
+    assert.equal(existsSync(draft), false);
 
-    rmSync(join(draft, "references"), { recursive: true });
+    mkdirSync(draft, { recursive: true });
     writeFileSync(join(draft, "SKILL.md"), skill("example-skill", "Follow the improved workflow."));
     const updated = await execute("skill_save", { scope: "project", name: "example-skill" });
     assert.equal(updated.details.verified, true);
     assert.equal(readFileSync(join(target, "references", "guide.md"), "utf8"), "# Guide\n");
     assert.match(readFileSync(join(target, "SKILL.md"), "utf8"), /improved workflow/);
+    assert.equal(existsSync(draft), false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

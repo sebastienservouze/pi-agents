@@ -6,7 +6,7 @@ A specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-work
 
 ## What you get
 
-| Bundled agent | Use it when you want to… |
+| System agent | Use it when you want to… |
 |---|---|
 | `agent-architect` | Decide whether a need calls for a prompt, skill, tool, or agent, then create an agent when justified. |
 | `agent-skill-creator` | Compare existing public skills, create or adapt a standards-compliant skill, and install it safely. |
@@ -24,7 +24,7 @@ The extension supports two execution modes:
 pi install npm:@nerisma/pi-agents
 ```
 
-The four bundled agents are installed in `~/.pi/agent/agents/`. Existing files with the same names are backed up as `*-old` files, which pi does not discover as agents. The architect inherits `defaultProvider` and `defaultModel` from `~/.pi/agent/settings.json` when both are configured.
+The four system agents remain in the installed `pi-agents` package and are read when agents are discovered. They are not copied into `~/.pi/agent/agents/`. Project agents override global agents with the same name, and global agents override system agents.
 
 Reload pi after installation:
 
@@ -32,15 +32,17 @@ Reload pi after installation:
 /reload
 ```
 
-> Upgrading from a release that installed `tool-creator`? The bundled agent is now named `agent-tool-creator`. Review and remove the legacy `~/.pi/agent/agents/tool-creator.md` when you no longer need the old alias.
+> Upgrading from an earlier release? Remove the previously exported agent files from `~/.pi/agent/agents/` if you want to use the system versions. Keep any file you intentionally customized: global definitions override system agents. The legacy `tool-creator.md` alias can also be removed when no longer needed.
 
 ## Quick start
 
-Open the agent selector:
+Open the agent selector with `/agent` or `Alt+A`:
 
 ```text
 /agent
 ```
+
+The selector groups available agents as project-local, global, then system agents. Empty sections are omitted.
 
 Or activate a role directly:
 
@@ -118,6 +120,7 @@ inspect existing capabilities
 → ask for confirmation
 → save atomically
 → verify the written content
+→ remove the draft
 ```
 
 The save tools derive all paths from a validated scope and name, reject symlinks, detect changes made during confirmation, and never accept arbitrary destination paths. Skill updates preserve target files that are absent from the draft; this version does not delete skill resources.
@@ -187,9 +190,10 @@ A typical audit uses `session_stats` first, then targeted `session_extract` call
 Agents are discovered from:
 
 - `.pi/agents/*.md` for the current project;
-- `~/.pi/agent/agents/*.md` globally.
+- `~/.pi/agent/agents/*.md` globally;
+- the `agents/` directory shipped with `pi-agents` for system agents.
 
-Project agents override global agents with the same name. Each file contains YAML frontmatter followed by its system prompt:
+Project agents override global agents with the same name, and global agents override system agents. Each file contains YAML frontmatter followed by its system prompt:
 
 ```markdown
 ---

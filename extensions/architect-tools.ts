@@ -10,7 +10,6 @@ import {
   DEFAULT_AGENT_TOOLS,
   discoverAgents,
   getAgentDirectories,
-  invalidateAgentCache,
   parseAgentMarkdown,
   type AgentDiagnostic,
 } from "./registry.js";
@@ -386,7 +385,7 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
         .map((agent) => ({
           name: agent.name,
           description: agent.description,
-          scope: agent.source === "user" ? "global" : "project",
+          scope: agent.source === "user" ? "global" : agent.source === "project" ? "project" : "system",
           path: agent.filePath,
         }));
 
@@ -532,14 +531,13 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
       } finally {
         try { fs.unlinkSync(tempPath); } catch { /* rename succeeded or cleanup is best-effort */ }
       }
-      invalidateAgentCache();
-
       const savedContent = fs.readFileSync(result.targetPath, "utf-8");
       const savedSha256 = sha256(savedContent);
       if (savedSha256 !== draftSha256) throw new Error(`Post-write verification failed: ${result.targetPath}`);
+      fs.unlinkSync(result.draftPath);
 
       return {
-        content: [{ type: "text", text: `Agent saved and verified: ${result.targetPath}` }],
+        content: [{ type: "text", text: `Agent saved and verified: ${result.targetPath}\nDraft removed: ${result.draftPath}` }],
         details: { ...result, saved: true, verified: true },
       };
       }));

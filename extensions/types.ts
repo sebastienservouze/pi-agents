@@ -12,7 +12,7 @@ export interface AgentConfig {
   model?: string;
   thinkingLevel?: string;
   systemPrompt: string;
-  source: "user" | "project";
+  source: "system" | "user" | "project";
   filePath: string;
   /** If true, loads AGENTS.md from the current directory and appends it to the
    * system prompt. Silent if absent. */

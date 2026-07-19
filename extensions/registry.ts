@@ -1,14 +1,13 @@
 /**
- * Discovery, parsing and loading of agents from:
- * - .pi/agents/*.md (project)
- * - ~/.pi/agent/agents/*.md (global)
+ * Discovery, parsing and loading of project, global and pi-agents system agents.
  *
- * Project agents override user agents on name conflict.
+ * Project agents override global agents, which override system agents.
  */
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./types.js";
 
@@ -110,7 +109,7 @@ function asBool(value: unknown, diagnostics: AgentDiagnostic[]): boolean {
  */
 export function parseAgentMarkdown(
   content: string,
-  source: "user" | "project",
+  source: "system" | "user" | "project",
   filePath: string,
 ): ParsedAgentMarkdown {
   const diagnostics: AgentDiagnostic[] = [];
@@ -158,7 +157,8 @@ export function parseAgentMarkdown(
         message: `Agent name must match ${AGENT_NAME_PATTERN}`,
       });
     }
-    const expectedName = path.basename(filePath, path.extname(filePath));
+    const basename = path.basename(filePath, path.extname(filePath));
+    const expectedName = source === "system" ? basename.toLowerCase() : basename;
     if (expectedName !== name) {
       diagnostics.push({
         severity: "error",
@@ -214,17 +214,6 @@ export function parseAgentMarkdown(
   return { agent, frontmatter, body, diagnostics };
 }
 
-// ─── Cache ──────────────────────────────────────────────────────────────────
-
-const CACHE_TTL_MS = 30_000;
-interface CacheEntry { agents: AgentConfig[]; timestamp: number }
-const _agentCache = new Map<string, CacheEntry>();
-
-/** Clear discovery results after an agent file is written. */
-export function invalidateAgentCache(): void {
-  _agentCache.clear();
-}
-
 /** Returns the global pi agent directory. */
 export function getAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
@@ -238,7 +227,7 @@ export function getAgentDirectories(cwd: string): { user: string; project: strin
   };
 }
 
-function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: "system" | "user" | "project"): AgentConfig[] {
   if (!fs.existsSync(dir)) return [];
 
   let entries: fs.Dirent[];
@@ -255,7 +244,12 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 
     const filePath = path.join(dir, entry.name);
     try {
-      const parsed = parseAgentMarkdown(fs.readFileSync(filePath, "utf-8"), source, filePath);
+      const content = fs.readFileSync(filePath, "utf-8");
+      const parsed = parseAgentMarkdown(
+        source === "system" ? content.replace(/^model: __PI_DEFAULT_MODEL__\r?\n/m, "") : content,
+        source,
+        filePath,
+      );
       if (parsed.agent) agents.push(parsed.agent);
     } catch {
       // Discovery is intentionally fail-open per file.
@@ -264,19 +258,21 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
   return agents;
 }
 
-/** Discovers all available agents. Project definitions override global ones. */
+/** Discovers agents in display and precedence order: project, global, system. */
 export function discoverAgents(cwd: string): AgentConfig[] {
-  const cached = _agentCache.get(cwd);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.agents;
-
   const dirs = getAgentDirectories(cwd);
-  const map = new Map<string, AgentConfig>();
-  for (const agent of loadAgentsFromDir(dirs.user, "user")) map.set(agent.name, agent);
-  for (const agent of loadAgentsFromDir(dirs.project, "project")) map.set(agent.name, agent);
+  const systemDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "agents");
+  const byName = (agents: AgentConfig[]) => new Map(agents.map((agent) => [agent.name, agent]));
+  const project = byName(loadAgentsFromDir(dirs.project, "project"));
+  const user = byName(loadAgentsFromDir(dirs.user, "user"));
+  const system = byName(loadAgentsFromDir(systemDir, "system"));
+  const sortByName = (agents: AgentConfig[]) => agents.sort((a, b) => a.name.localeCompare(b.name));
 
-  const agents = [...map.values()];
-  _agentCache.set(cwd, { agents, timestamp: Date.now() });
-  return agents;
+  return [
+    ...sortByName([...project.values()]),
+    ...sortByName([...user.values()].filter((agent) => !project.has(agent.name))),
+    ...sortByName([...system.values()].filter((agent) => !project.has(agent.name) && !user.has(agent.name))),
+  ];
 }
 
 /** Finds an agent by exact name. */

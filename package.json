@@ -1,6 +1,6 @@
 {
   "name": "@nerisma/pi-agents",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Specialized agent system for pi: task delegation, activation/deactivation, and system prompt injection via .md files.",
   "keywords": [
     "pi-package",
@@ -18,13 +18,11 @@
   "files": [
     "extensions",
     "agents",
-    "scripts",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/install-agent-architect.cjs",
     "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/*.test.ts"
   },
   "pi": {

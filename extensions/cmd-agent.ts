@@ -92,22 +92,34 @@ export async function showAgentSelector(
 ): Promise<void> {
   const agents = discoverAgents(ctx.cwd);
   if (agents.length === 0) {
-    ctx.ui.notify("No agents found in .pi/agents/*.md or ~/.pi/agent/agents/*.md", "warning");
+    ctx.ui.notify("No project, global or system agents found", "warning");
     return;
   }
 
   const state = getState();
   const items: SelectItem[] = [];
+  const headerPrefix = "__section__:";
+  const sections = [
+    { source: "project", label: "Locaux" },
+    { source: "user", label: "Globaux" },
+    { source: "system", label: "Système" },
+  ] as const;
 
-  for (const a of agents) {
-    const isActive = a.name === state?.name;
-    const label = isActive ? `${a.name}  ●` : a.name;
-    const modelInfo = a.model ? `Model: ${a.model}` : "";
-    items.push({
-      value: a.name,
-      label,
-      description: modelInfo ? `${a.description} — ${modelInfo}` : a.description,
-    });
+  for (const section of sections) {
+    const sectionAgents = agents.filter((agent) => agent.source === section.source);
+    if (!sectionAgents.length) continue;
+    items.push({ value: `${headerPrefix}${section.source}`, label: `── ${section.label} ──` });
+
+    for (const agent of sectionAgents) {
+      const isActive = agent.name === state?.name;
+      const label = isActive ? `${agent.name}  ●` : agent.name;
+      const modelInfo = agent.model ? `Model: ${agent.model}` : "";
+      items.push({
+        value: agent.name,
+        label,
+        description: modelInfo ? `${agent.description} — ${modelInfo}` : agent.description,
+      });
+    }
   }
 
   // "Deactivate" goes LAST so a reflexive Enter never lands on it.
@@ -119,9 +131,9 @@ export async function showAgentSelector(
     });
   }
 
-  // Index of the active agent within `items` (agents come first), used to
-  // pre-highlight it below.
-  const activeIndex = state ? items.findIndex((it) => it.value === state.name) : -1;
+  const activeIndex = state
+    ? items.findIndex((item) => item.value === state.name)
+    : items.findIndex((item) => !item.value.startsWith(headerPrefix));
 
   const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
     const container = new Container();
@@ -138,10 +150,11 @@ export async function showAgentSelector(
       scrollInfo: (t) => theme.fg("dim", t),
       noMatch: (t) => theme.fg("warning", t),
     });
-    // Open on the active agent so a reflexive Enter re-selects it instead of
-    // the first entry.
-    if (activeIndex > 0) selectList.setSelectedIndex(activeIndex);
-    selectList.onSelect = (item) => done(item.value);
+    // Les en-têtes restent visibles mais ne peuvent pas être sélectionnés.
+    if (activeIndex >= 0) selectList.setSelectedIndex(activeIndex);
+    selectList.onSelect = (item) => {
+      if (!item.value.startsWith(headerPrefix)) done(item.value);
+    };
     selectList.onCancel = () => done(null);
     container.addChild(selectList);
 
@@ -154,7 +167,16 @@ export async function showAgentSelector(
       render: (w) => container.render(w),
       invalidate: () => container.invalidate(),
       handleInput: (data) => {
+        const beforeItem = selectList.getSelectedItem();
+        const before = beforeItem ? items.indexOf(beforeItem) : -1;
         selectList.handleInput(data);
+        const selected = selectList.getSelectedItem();
+        if (selected?.value.startsWith(headerPrefix)) {
+          const headerIndex = items.indexOf(selected);
+          const movingDown = headerIndex > before || (before === items.length - 1 && headerIndex === 0);
+          const nextIndex = (headerIndex + (movingDown ? 1 : -1) + items.length) % items.length;
+          selectList.setSelectedIndex(nextIndex);
+        }
         tui.requestRender();
       },
     };
@@ -166,7 +188,10 @@ export async function showAgentSelector(
   if (result !== undefined) {
     choice = result;
   } else {
-    choice = await ctx.ui.select("Select an agent", items.map((i) => i.value));
+    choice = await ctx.ui.select(
+      "Select an agent",
+      items.filter((item) => !item.value.startsWith(headerPrefix)).map((item) => item.value),
+    );
   }
 
   if (choice === "off") {

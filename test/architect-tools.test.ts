@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -71,11 +71,13 @@ test("validates and saves a staged project agent without retransmitting Markdown
     const created = await execute("agent_save", { scope: "project", name: "reviewer" });
     assert.equal(created.details.verified, true);
     assert.equal(readFileSync(target, "utf8"), markdown("First version"));
+    assert.equal(existsSync(draft), false);
 
     writeFileSync(draft, markdown("Second version"));
     const overwritten = await execute("agent_save", { scope: "project", name: "reviewer" });
     assert.equal(overwritten.details.verified, true);
     assert.equal(readFileSync(target, "utf8"), markdown("Second version"));
+    assert.equal(existsSync(draft), false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

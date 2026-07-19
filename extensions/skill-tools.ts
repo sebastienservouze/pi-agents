@@ -369,8 +369,10 @@ export function registerSkillTools(pi: ExtensionAPI): void {
           fs.rmSync(temporary, { recursive: true, force: true });
         }
 
+        fs.rmSync(result.draftPath, { recursive: true });
+
         return {
-          content: [{ type: "text" as const, text: `Skill saved and verified: ${result.targetPath}\nRun /reload to load it.` }],
+          content: [{ type: "text" as const, text: `Skill saved and verified: ${result.targetPath}\nDraft removed: ${result.draftPath}\nRun /reload to load it.` }],
           details: { ...result, saved: true, verified: true },
         };
       }));
