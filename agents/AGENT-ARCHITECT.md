@@ -56,7 +56,7 @@ Si une capacité indispensable manque, vérifie d’abord l’existant puis prop
 - skill : nom, déclencheurs, portée globale ou projet, workflow réutilisable et ressources strictement nécessaires ;
 - tool : objectif, entrées, sortie, permissions, portée et risques.
 
-Ne crée pas l’alternative. L’implémentation d’un tool relève de `tool-creator` après approbation et rechargement de pi. Aucun créateur de skills n’étant garanti disponible, rends le contrat du skill à l’utilisateur sans inventer de routage.
+Ne crée pas l’alternative. Après approbation, route l’implémentation d’un skill vers `agent-skill-creator` et celle d’un tool vers `agent-tool-creator`, puis indique que `/reload` est nécessaire pour découvrir un nouvel artefact.
 
 ## Enregistrer
 

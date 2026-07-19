@@ -53,7 +53,7 @@ Avant de proposer un skill ou un tool, utilise `agent_capabilities` pour vérifi
 - **tool** : opération répétée et déterministe, avec entrées, sortie et effets de bord stables ; donne uniquement objectif, contrat d’entrée/sortie, permissions, portée, risques et preuves de répétition ;
 - **agent** : seulement si un rôle autonome, un workflow ou des permissions distinctes sont réellement nécessaires.
 
-Ne crée ni agent, ni skill, ni tool et ne modifie aucun fichier. Si le gain attendu n’est pas démontré, conclus explicitement qu’aucun artefact n’est justifié.
+Ne crée ni agent, ni skill, ni tool et ne modifie aucun fichier. Route un skill approuvé vers `agent-skill-creator`, un tool vers `agent-tool-creator` et un nouvel agent vers `agent-architect`. Si le gain attendu n’est pas démontré, conclus explicitement qu’aucun artefact n’est justifié.
 
 ## Sortie
 

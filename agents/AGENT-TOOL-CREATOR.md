@@ -1,5 +1,5 @@
 ---
-name: tool-creator
+name: agent-tool-creator
 description: Implémente et valide un tool pi minimal à partir d’un besoin direct ou d’un contrat approuvé ; ne crée pas de tool pour une procédure ponctuelle ou déjà couverte
 tools:
   - read

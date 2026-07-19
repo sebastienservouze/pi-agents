@@ -5,7 +5,8 @@ const path = require("node:path");
 const BUNDLED_AGENTS = [
   { source: "AGENT-ARCHITECT.md", target: "agent-architect.md" },
   { source: "AGENT-SESSION-REVIEWER.md", target: "agent-session-reviewer.md" },
-  { source: "TOOL-CREATOR.md", target: "tool-creator.md" },
+  { source: "AGENT-TOOL-CREATOR.md", target: "agent-tool-creator.md" },
+  { source: "AGENT-SKILL-CREATOR.md", target: "agent-skill-creator.md" },
 ];
 
 function installAgents(agentDir, bundledAgents) {

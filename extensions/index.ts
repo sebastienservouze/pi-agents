@@ -3,7 +3,7 @@
  *
  * Registers all components:
  *   - `delegate` tool (delegation to sub-agents)
- *   - architect tools (capability inspection, validation, safe saving)
+ *   - architect and skill tools (capability inspection, validation, safe saving)
  *   - read-only session review tools (discovery, statistics, extraction)
  *   - `/agent` command (activation/deactivation)
  *   - `before_agent_start` hook (system prompt injection)
@@ -14,6 +14,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerDelegateTool } from "./delegate.js";
 import { registerArchitectTools } from "./architect-tools.js";
+import { registerSkillTools } from "./skill-tools.js";
 import { registerSessionTools } from "./session-tools.js";
 import { registerAgentCommand, showAgentSelector } from "./cmd-agent.js";
 import { registerHooks } from "./hook.js";
@@ -30,6 +31,7 @@ export default function (pi: ExtensionAPI) {
   // Registration
   registerDelegateTool(pi);
   registerArchitectTools(pi);
+  registerSkillTools(pi);
   registerSessionTools(pi);
   registerAgentCommand(pi, getState, setState);
   registerHooks(pi, () => activeAgentState?.name ?? null, {

@@ -1,210 +1,227 @@
 # @nerisma/pi-agents
 
-Specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+A specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
 
-Agents are defined in `.md` files (YAML frontmatter + system prompt). The extension uses them two ways:
+`pi-agents` lets you switch from a general coding assistant to a focused role with a dedicated prompt, a least-privilege tool set, optional skills, and an appropriate model. It also provides safe workflows for creating agents, tools, and Agent Skills, plus evidence-based reviews of persisted sessions.
 
-- **Agent mode** — activate an agent to fully **replace the system prompt**, **restrict the allowed tools** (enforced on the request *before* it reaches the provider), and set the **model** and **thinking level**.
-- **Delegation** — the `delegate` tool runs an agent in an isolated `pi` sub-process; it works autonomously and returns a targeted summary with usage metrics.
+## What you get
 
-## Installation
+| Bundled agent | Use it when you want to… |
+|---|---|
+| `agent-architect` | Decide whether a need calls for a prompt, skill, tool, or agent, then create an agent when justified. |
+| `agent-skill-creator` | Compare existing public skills, create or adapt a standards-compliant skill, and install it safely. |
+| `agent-tool-creator` | Implement the smallest reliable pi tool from an approved contract or a direct request. |
+| `agent-session-reviewer` | Audit a session, including decision quality, tool usage, missed parallelism, and opportunities for agents, skills, or tools. |
+
+The extension supports two execution modes:
+
+- **Agent mode** replaces the current system prompt and enforces the selected agent's tool allow-list before the request reaches the model.
+- **Delegation** runs a specialized agent in an isolated pi subprocess and returns its result with usage metrics.
+
+## Install
 
 ```bash
 pi install npm:@nerisma/pi-agents
 ```
 
-Installation also deploys the bundled `agent-architect` to
-`~/.pi/agent/agents/agent-architect.md`. Its `model` frontmatter is built from
-`defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json`; when either
-setting is absent, the field is omitted so pi keeps its normal model fallback.
-An existing agent is backed up first as `agent-architect-old` (without `.md`, so
-it is not discovered as another agent).
+The four bundled agents are installed in `~/.pi/agent/agents/`. Existing files with the same names are backed up as `*-old` files, which pi does not discover as agents. The architect inherits `defaultProvider` and `defaultModel` from `~/.pi/agent/settings.json` when both are configured.
 
-Activate it with:
+Reload pi after installation:
+
+```text
+/reload
+```
+
+> Upgrading from a release that installed `tool-creator`? The bundled agent is now named `agent-tool-creator`. Review and remove the legacy `~/.pi/agent/agents/tool-creator.md` when you no longer need the old alias.
+
+## Quick start
+
+Open the agent selector:
+
+```text
+/agent
+```
+
+Or activate a role directly:
 
 ```text
 /agent agent-architect
+/agent agent-skill-creator
+/agent agent-tool-creator
+/agent agent-session-reviewer
 ```
 
-## Agent files
+Return to the normal pi prompt with:
 
-Agents are discovered from two locations (project overrides global on name conflict):
+```text
+/agent off
+```
 
-- `.pi/agents/*.md` — project agents (take priority)
-- `~/.pi/agent/agents/*.md` — global agents
+### Create an agent
 
-Each file is a YAML frontmatter block followed by the system prompt body:
+```text
+/agent agent-architect
+Create a project-local agent that reviews database migrations without modifying files.
+```
+
+The architect first checks existing capabilities and challenges whether a new agent is needed. If it is, it proposes the prompt, permissions, scope, and final path before writing anything. The final save shows a diff and requires confirmation.
+
+### Create or reuse a skill
+
+```text
+/agent agent-skill-creator
+I want a project skill for preparing safe PostgreSQL migration plans.
+```
+
+The skill creator:
+
+1. clarifies triggers, inputs, outputs, scope, and success criteria;
+2. checks loaded skills and searches public sources for close matches;
+3. compares reuse, adaptation, and creation, including maintenance, license, dependencies, security, and portability;
+4. proposes the exact `SKILL.md`, references, scripts, and assets that are actually needed;
+5. writes to a non-discovered draft directory;
+6. validates scripts and resources;
+7. displays the complete change and asks before installing it.
+
+Project skills are installed under `.pi/skills/<name>/`; global skills go under `~/.pi/agent/skills/<name>/`. Downloading or cloning a public skill and installing dependencies require separate confirmation. External skills and their scripts are treated as untrusted code and reviewed before installation.
+
+### Create a tool
+
+```text
+/agent agent-tool-creator
+Create a read-only tool that extracts the schema version from this project's migration files.
+```
+
+The tool creator prefers existing code, Node APIs, pi APIs, and installed dependencies. It adds the smallest useful test, runs relevant checks, and avoids speculative abstractions.
+
+### Review a session
+
+```text
+/agent agent-session-reviewer
+Review the latest session for agent-tool-creator.
+```
+
+The reviewer follows persisted branch relationships instead of treating JSONL as a flat log. It evaluates results, permissions, decision quality, validation, repeated Bash work, context usage, and calls that could safely have run in parallel. Recommendations require session evidence; a single occurrence is not presented as a general trend.
+
+## Safety model
+
+Agent definitions declare their tools explicitly. While an agent is active, pi-agents reapplies that allow-list to the request sent to the provider, including tools injected by other extensions.
+
+Creation workflows use the same staged-save pattern:
+
+```text
+inspect existing capabilities
+→ agree on a design
+→ write a non-discovered draft
+→ validate
+→ show warnings and diff
+→ ask for confirmation
+→ save atomically
+→ verify the written content
+```
+
+The save tools derive all paths from a validated scope and name, reject symlinks, detect changes made during confirmation, and never accept arbitrary destination paths. Skill updates preserve target files that are absent from the draft; this version does not delete skill resources.
+
+## Everyday commands
+
+| Command | Purpose |
+|---|---|
+| `/agent` | Open the agent selector (`Alt+A` also works). |
+| `/agent <name>` | Activate an agent. |
+| `/agent off` | Restore the original prompt, tools, model, and thinking level. |
+| `/agent-list` | List discovered agents. |
+| `/agent-prompt [first]` | Inspect the effective prompt sent for the active agent. |
+| `/agent-tools` | Inspect the effective tool list sent to the provider. |
+| `/agent-default <name>` | Auto-activate an agent at the next pi start. |
+| `/agent-default off` | Clear the default agent. |
+
+`PI_DEFAULT_AGENT` overrides the persisted default when set.
+
+## Delegation
+
+The `delegate` tool runs a focused task in an isolated pi process:
+
+```text
+delegate agent=<name> task=<task with all required context>
+```
+
+The subprocess receives the selected agent's composed prompt, tools, model, and thinking level. Output is streamed back with token, cost, duration, and tool-call metrics. Delegation is useful when the main agent should keep its role or context while a specialist handles a bounded subtask.
+
+## Built-in tools
+
+Specialized tools are registered globally but kept inactive unless an agent explicitly allows them.
+
+### Capability and agent creation
+
+- `agent_capabilities` lists loaded tools, authenticated models, skills, and agents. Use it instead of inventing capability names.
+- `agent_validate scope=<global|project> name=<name>` validates an agent draft on request.
+- `agent_save scope=<global|project> name=<name>` validates, confirms, atomically saves, and verifies an agent draft.
+
+Agent draft locations:
+
+- project: `<cwd>/.pi/agents/.drafts/<name>.md`
+- global: `~/.pi/agent/agents/.drafts/<name>.md`
+
+### Skill creation
+
+- `skill_validate scope=<global|project> name=<name>` checks a complete staged skill directory, its Agent Skills frontmatter, resources, collisions, symlinks, and proposed changes.
+- `skill_save scope=<global|project> name=<name>` validates, confirms, overlays, atomically swaps, and verifies the skill directory. Existing files omitted from the draft are preserved.
+
+Skill draft locations:
+
+- project: `<cwd>/.pi/skills/.drafts/<name>/`
+- global: `~/.pi/agent/skills/.drafts/<name>/`
+
+Both tools enforce portable Agent Skills names and require a root `SKILL.md` with a non-empty `description`. Detailed knowledge belongs in `references/`, deterministic helpers in `scripts/`, and output resources in `assets/` only when the workflow uses them.
+
+### Session review
+
+- `session_find agentName=<name>` finds recent persisted sessions containing the requested agent on the active branch.
+- `session_stats path=<file> agentName=<name>` computes branch-aware tool, cost, model, failure, confirmation, and compaction landmarks.
+- `session_extract path=<file> agentName=<name>` returns bounded, redacted evidence with filters, projections, pagination, and causal context.
+
+A typical audit uses `session_stats` first, then targeted `session_extract` calls. Thinking text and obvious credentials are omitted.
+
+## Define your own agents
+
+Agents are discovered from:
+
+- `.pi/agents/*.md` for the current project;
+- `~/.pi/agent/agents/*.md` globally.
+
+Project agents override global agents with the same name. Each file contains YAML frontmatter followed by its system prompt:
 
 ```markdown
 ---
 name: explorer
-description: Explores a codebase and reports where things live
-tools: read, grep, find, ls          # list or comma-separated string
-skills: research, code-review        # list or comma-separated string
-model: anthropic/claude-sonnet-5     # "provider/model" or a bare model id
+description: Explores a codebase and reports where relevant behavior lives
+tools: read, fffind, ffgrep
+skills: code-review
 thinkingLevel: medium
 useAgentFile: true
 ---
 
-You are a codebase explorer. Locate the relevant code and report file:line
-references. Do not modify anything.
+Locate the relevant flow and return concise file and symbol references. Do not modify files.
 ```
 
-### Frontmatter fields
+| Field | Required | Purpose |
+|---|---|---|
+| `name` | yes | Unique name used by `/agent` and `delegate`. |
+| `description` | yes | Routing guidance shown to models and users. |
+| `tools` | no | Explicit allow-list. Omission grants defaults including `bash`; explicit lists are safer. |
+| `skills` | no | Skill names advertised to this agent. Project skills are always included and de-duplicated. |
+| `model` | no | `provider/model` or a bare model ID. |
+| `thinkingLevel` | no | Reasoning level supported by the selected model. |
+| `useAgentFile` | no | Append the current directory's `AGENTS.md` when `true`. |
 
-| Field | Required | Description |
-|----------------|----------|-------------|
-| `name` | yes | Unique agent name (used by `/agent` and `delegate`). |
-| `description` | yes | Shown in selectors and delegation guidelines. |
-| `tools` | no | Allowed tools, as a YAML list or a comma-separated string. Omitted ⇒ defaults including `bash`; declare tools explicitly for least privilege. |
-| `skills` | no | Skill names to advertise, as a YAML list or a comma-separated string. Project-local skills are always added and de-duplicated by name. Omitted ⇒ project-local skills only. |
-| `model` | no | `provider/model` or a bare model id. |
-| `thinkingLevel` | no | Thinking level passed to the agent. |
-| `useAgentFile` | no | `true` to append the current directory's `AGENTS.md` to the system prompt. |
+The prompt is composed with selected skills, optional project context, environment information, and the current date. Use `/agent-prompt` to inspect the effective result.
 
-The body (everything after the frontmatter) becomes the agent's system prompt. For
-agent mode (`/agent`, auto-activation), it is composed with the selected and project-local skills,
-pi's `contextFiles`, an environment block and the current date. Use `/agent-prompt`
-to inspect the prompt actually sent.
+## Development
 
-## Agent architect tools
-
-The extension registers three deterministic tools for agents that design or maintain
-`pi-agents` definitions. They are inactive in normal sessions; add them to an agent's
-`tools:` allow-list when needed.
-
-### `agent_capabilities`
-
-Lists the tools, authenticated models, loaded skills, and agents available in the
-current pi runtime. Results can be filtered by category or name. This is the source
-of truth for capability names; newly installed extensions appear only after pi is
-reloaded.
-
-```text
-agent_capabilities category=models
-agent_capabilities category=tools query=web
+```bash
+npm test
+npm run typecheck
 ```
-
-### Agent drafts
-
-The architect writes each candidate once, then applies targeted edits in a staging
-directory that is not scanned for agents:
-
-- global: `~/.pi/agent/agents/.drafts/<name>.md`
-- project: `<cwd>/.pi/agents/.drafts/<name>.md`
-
-Drafts remain available for later corrections; saving never deletes them.
-
-### `agent_validate`
-
-Reads and validates the staged draft without writing it:
-
-- frontmatter syntax, recognized fields, required values, filename and agent name;
-- tools, skills, model authentication, and thinking level;
-- global/project shadowing and existing-target diff;
-- empty prompts, duplicate entries, and implicit default tools.
-
-```text
-agent_validate scope=project name=reviewer
-```
-
-Errors are blocking. Warnings describe inherited defaults or shadowing. This tool is
-optional: use it for a dry run or to check a corrected draft separately.
-
-### `agent_save`
-
-Reads and validates the draft, then atomically writes only to one of the two supported
-targets:
-
-- `~/.pi/agent/agents/<name>.md`
-- `<cwd>/.pi/agents/<name>.md`
-
-It derives both paths from `scope` and `name`, refuses symlinks, displays warnings and
-the exact diff, and requires an interactive confirmation before every write. Draft and
-target hashes are checked internally around confirmation; successful writes are read
-back and verified.
-
-```text
-agent_save scope=project name=reviewer
-```
-
-The intended architect workflow is:
-
-```text
-agent_capabilities → design approval → write draft once → agent_save
-                                      ↘ edit draft and retry on validation error
-```
-
-## Session review tools
-
-Three read-only tools support deterministic audits of persisted pi JSONL sessions. They
-stream files, follow the active `id`/`parentId` branch, propagate cancellation, and are
-inactive unless an agent explicitly lists them:
-
-- `session_find agentName=<name>` finds matching sessions under
-  `~/.pi/agent/sessions`, newest valid entry first; `excludePath` avoids selecting
-  the current audit session.
-- `session_stats path=<file> agentName=<name>` reports tool calls, tokens, cost,
-  models and compact evidence landmarks (requests, finals, failures, actions,
-  confirmations, compactages and largest entries). Set `scope` to `active-branch`
-  or `whole-tree` when an agent segment is not wanted.
-- `session_extract path=<file> agentName=<name>` defaults to detailed evidence.
-  Use `view=outline` for a content-free index, `fields` for projection, and
-  `entryIds` with `context` for neighbouring, parent and matching tool-call/result
-  evidence. `totalChars` imposes a global output budget; coverage and the next cursor
-  are always returned. Thinking text and obvious credentials are omitted.
-
-Efficient review flow: `session_stats` landmarks → optional `session_extract`
-outline → targeted `session_extract` evidence with causal context.
-
-## Agent mode
-
-Activate an agent to take over the current session:
-
-- `/agent` — interactive selector (also `Alt+A`)
-- `/agent <name>` — activate directly
-- `/agent off` — deactivate and restore the original tools, model and thinking level
-- `/agent-list` — list available agents
-- `/agent-prompt [first]` — show the system prompt actually sent (post-rewrite);
-  `first` shows the session-start prompt (persisted, survives reload). The full
-  text is also dumped to `~/.pi/last-system-prompt.md`.
-- `/agent-tools` — show the tools actually sent to the provider on the last
-  request (post allow-list enforcement, not just the agent's configured
-  `tools:`).
-
-While an agent is active its `tools:` allow-list is enforced in
-`before_agent_start` by re-applying it on the session's active tool set. This
-strips tools injected by other extensions (e.g. the MCP `ctx_*` family) that
-aren't in the list, and works for **all** providers — including custom
-`streamSimple` transports (e.g. pi-anthropic-oauth) that bypass the
-`before_provider_request` hook. The hook remains as a defense-in-depth safety
-net.
-
-## Default agent
-
-Set an agent to auto-activate once at the start of every session. This is
-persisted to `~/.pi/pi-agents.json`, so it survives pi restarts:
-
-- `/agent-default <name>` — set the default (applies at the next pi start)
-- `/agent-default off` — clear it
-- `/agent-default` — show the current default
-
-`PI_DEFAULT_AGENT` (environment variable) overrides the persisted value when set.
-
-## Delegation
-
-The `delegate` tool lets the model hand a sub-task to a specialized agent:
-
-```
-delegate agent=<name> task=<task with all the needed context>
-```
-
-The agent runs in an isolated `pi --mode json` sub-process with its own system
-prompt — the agent's `.md` composed with a delegation notice, an environment
-block and the current date, passed natively via `--system-prompt` (no default
-pi prompt, no temp file) — tools, model and thinking level. The result is
-streamed back with live activity and usage metrics (tokens, cost, duration,
-tool calls).
 
 ## License
 

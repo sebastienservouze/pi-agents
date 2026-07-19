@@ -8,7 +8,7 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const { installBundledAgents } = require("../scripts/install-agent-architect.cjs");
 
-const agents = ["agent-architect", "agent-session-reviewer", "tool-creator"];
+const agents = ["agent-architect", "agent-session-reviewer", "agent-tool-creator", "agent-skill-creator"];
 
 test("installs bundled agents with pi defaults and backs up previous agents", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-agents-"));
@@ -23,7 +23,8 @@ test("installs bundled agents with pi defaults and backs up previous agents", ()
     assert.deepEqual(installed.map((item: { target: string }) => item.target), agents.map((agent) => join(agentsDir, `${agent}.md`)));
     assert.match(readFileSync(join(agentsDir, "agent-architect.md"), "utf8"), /model: "test-provider\/test-model"/);
     assert.match(readFileSync(join(agentsDir, "agent-session-reviewer.md"), "utf8"), /## Qualité des décisions|## Ce qu’il faut juger/);
-    assert.match(readFileSync(join(agentsDir, "tool-creator.md"), "utf8"), /name: tool-creator/);
+    assert.match(readFileSync(join(agentsDir, "agent-tool-creator.md"), "utf8"), /name: agent-tool-creator/);
+    assert.match(readFileSync(join(agentsDir, "agent-skill-creator.md"), "utf8"), /name: agent-skill-creator/);
     for (const agent of agents) {
       assert.equal(readFileSync(join(agentsDir, `${agent}-old`), "utf8"), `previous ${agent}`);
     }
