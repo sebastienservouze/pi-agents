@@ -85,9 +85,19 @@ agent_capabilities category=models
 agent_capabilities category=tools query=web
 ```
 
+### Agent drafts
+
+The architect writes each candidate once, then applies targeted edits in a staging
+directory that is not scanned for agents:
+
+- global: `~/.pi/agent/agents/.drafts/<name>.md`
+- project: `<cwd>/.pi/agents/.drafts/<name>.md`
+
+Drafts remain available for later corrections; saving never deletes them.
+
 ### `agent_validate`
 
-Validates complete candidate Markdown without writing it:
+Reads and validates the staged draft without writing it:
 
 - frontmatter syntax, recognized fields, required values, filename and agent name;
 - tools, skills, model authentication, and thinking level;
@@ -95,32 +105,34 @@ Validates complete candidate Markdown without writing it:
 - empty prompts, duplicate entries, and implicit default tools.
 
 ```text
-agent_validate scope=project name=reviewer markdown="<complete agent Markdown>"
+agent_validate scope=project name=reviewer
 ```
 
-Errors are blocking. Warnings describe inherited defaults or shadowing. Validation
-of an existing target returns `existingSha256` for concurrency-safe saving.
+Errors are blocking. Warnings describe inherited defaults or shadowing. This tool is
+optional: use it for a dry run or to check a corrected draft separately.
 
 ### `agent_save`
 
-Validates again and atomically writes only to one of the two supported locations:
+Reads and validates the draft, then atomically writes only to one of the two supported
+targets:
 
 - `~/.pi/agent/agents/<name>.md`
 - `<cwd>/.pi/agents/<name>.md`
 
-It derives the path from `scope` and `name`, refuses symlink targets, never deletes
-agent files, and requires an interactive confirmation before every write. Overwriting
-also requires the hash returned by `agent_validate` and displays the exact diff.
+It derives both paths from `scope` and `name`, refuses symlinks, displays warnings and
+the exact diff, and requires an interactive confirmation before every write. Draft and
+target hashes are checked internally around confirmation; successful writes are read
+back and verified.
 
 ```text
-agent_save scope=project name=reviewer markdown="<validated Markdown>"
-agent_save scope=project name=reviewer markdown="<validated Markdown>" expectedSha256=<hash>
+agent_save scope=project name=reviewer
 ```
 
 The intended architect workflow is:
 
 ```text
-agent_capabilities → design approval → agent_validate → agent_save
+agent_capabilities → design approval → write draft once → agent_save
+                                      ↘ edit draft and retry on validation error
 ```
 
 ## Agent mode
