@@ -2,34 +2,59 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-function installAgentArchitect(agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent")) {
-  const template = fs.readFileSync(path.join(__dirname, "..", "agents", "AGENT-ARCHITECT.md"), "utf8");
+const BUNDLED_AGENTS = [
+  { source: "AGENT-ARCHITECT.md", target: "agent-architect.md" },
+  { source: "AGENT-SESSION-REVIEWER.md", target: "agent-session-reviewer.md" },
+  { source: "TOOL-CREATOR.md", target: "tool-creator.md" },
+];
+
+function installAgents(agentDir, bundledAgents) {
   const settingsPath = path.join(agentDir, "settings.json");
   const settings = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, "utf8")) : {};
   const model = typeof settings.defaultProvider === "string" && typeof settings.defaultModel === "string"
     ? `model: ${JSON.stringify(`${settings.defaultProvider}/${settings.defaultModel}`)}`
     : "";
-  const content = template.replace("model: __PI_DEFAULT_MODEL__", model);
   const agentsDir = path.join(agentDir, "agents");
-  const target = path.join(agentsDir, "agent-architect.md");
-  const backup = path.join(agentsDir, "agent-architect-old");
-  const temporary = `${target}.${process.pid}.tmp`;
-
   fs.mkdirSync(agentsDir, { recursive: true });
-  fs.writeFileSync(temporary, content);
-  try {
-    if (fs.existsSync(target)) fs.copyFileSync(target, backup);
-    fs.renameSync(temporary, target);
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
 
-  return { target, backup: fs.existsSync(backup) ? backup : undefined };
+  return bundledAgents.map(({ source, target: filename }) => {
+    const template = fs.readFileSync(path.join(__dirname, "..", "agents", source), "utf8");
+    const content = source === "AGENT-ARCHITECT.md"
+      ? template.replace("model: __PI_DEFAULT_MODEL__", model)
+      : template;
+    const target = path.join(agentsDir, filename);
+    const backup = path.join(agentsDir, filename.replace(/\.md$/, "-old"));
+    const temporary = `${target}.${process.pid}.tmp`;
+
+    fs.writeFileSync(temporary, content);
+    try {
+      if (fs.existsSync(target)) fs.copyFileSync(target, backup);
+      fs.renameSync(temporary, target);
+    } finally {
+      fs.rmSync(temporary, { force: true });
+    }
+
+    return { target, backup: fs.existsSync(backup) ? backup : undefined };
+  });
+}
+
+function resolveAgentDir(agentDir) {
+  return agentDir || process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+}
+
+function installBundledAgents(agentDir) {
+  return installAgents(resolveAgentDir(agentDir), BUNDLED_AGENTS);
+}
+
+// Conserve le périmètre historique de l'API publique.
+function installAgentArchitect(agentDir) {
+  return installAgents(resolveAgentDir(agentDir), [BUNDLED_AGENTS[0]])[0];
 }
 
 if (require.main === module) {
-  const { target, backup } = installAgentArchitect();
-  console.log(`pi-agents: installed ${target}${backup ? ` (backup: ${backup})` : ""}`);
+  for (const { target, backup } of installBundledAgents()) {
+    console.log(`pi-agents: installed ${target}${backup ? ` (backup: ${backup})` : ""}`);
+  }
 }
 
-module.exports = { installAgentArchitect };
+module.exports = { installAgentArchitect, installBundledAgents };
