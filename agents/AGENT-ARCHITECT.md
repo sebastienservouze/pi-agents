@@ -10,6 +10,7 @@ tools:
   - agent_validate
   - find
   - grep
+  - bash
   - ask_user_question
 model: __PI_DEFAULT_MODEL__
 thinkingLevel: medium

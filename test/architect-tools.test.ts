@@ -69,6 +69,23 @@ test("validates a project agent written to its final path", async () => {
   }
 });
 
+test("validates a bundled agent with its uppercase filename", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-agents-architect-"));
+  const target = join(cwd, "agents", "AGENT-PI-ENGINEER.md");
+  const bundledMarkdown = markdown.replace("name: reviewer", "name: agent-pi-engineer");
+  mkdirSync(join(cwd, "agents"), { recursive: true });
+  writeFileSync(target, bundledMarkdown);
+
+  try {
+    const { execute } = harness(cwd);
+    const validation = await execute("agent_validate", { scope: "bundled", name: "agent-pi-engineer" });
+    assert.equal(validation.details.valid, true);
+    assert.equal(validation.details.targetPath, target);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("rejects missing and symlinked final agents", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-agents-architect-"));
   const agents = join(cwd, ".pi", "agents");

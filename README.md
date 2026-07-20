@@ -161,12 +161,13 @@ Specialized tools are registered globally but kept inactive unless an agent expl
 ### Capability and agent creation
 
 - `agent_capabilities` lists loaded tools, authenticated models, skills, and agents. Use it instead of inventing capability names.
-- `agent_validate scope=<global|project> name=<name>` validates an agent written to its final path.
+- `agent_validate scope=<global|project|bundled> name=<name>` validates an agent written to its final path.
 
 Agent locations:
 
 - project: `<cwd>/.pi/agents/<name>.md`
 - global: `~/.pi/agent/agents/<name>.md`
+- bundled: `<cwd>/agents/<NAME_EN_MAJUSCULES>.md`
 
 ### Skill creation
 

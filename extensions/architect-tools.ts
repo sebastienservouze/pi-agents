@@ -13,10 +13,11 @@ import {
   type AgentDiagnostic,
 } from "./registry.js";
 
-const ScopeSchema = Type.Union([Type.Literal("global"), Type.Literal("project")]);
+const ScopeSchema = Type.Union([Type.Literal("global"), Type.Literal("project"), Type.Literal("bundled")]);
+type AgentScope = "global" | "project" | "bundled";
 const CandidateSchema = Type.Object({
   scope: ScopeSchema,
-  name: Type.String({ description: "Agent name and filename without .md" }),
+  name: Type.String({ description: "Canonical lower-case agent name" }),
 });
 
 interface SkillInfo {
@@ -41,8 +42,9 @@ interface ValidationResult {
   };
 }
 
-function agentPath(cwd: string, scope: "global" | "project", name: string): string {
+function agentPath(cwd: string, scope: AgentScope, name: string): string {
   if (!AGENT_NAME_PATTERN.test(name)) throw new Error("Invalid agent name");
+  if (scope === "bundled") return path.join(cwd, "agents", `${name.toUpperCase()}.md`);
   const dirs = getAgentDirectories(cwd);
   return path.join(scope === "global" ? dirs.user : dirs.project, `${name}.md`);
 }
@@ -110,9 +112,9 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
 
   function validate(
     ctx: ExtensionContext,
-    params: { scope: "global" | "project"; name: string },
+    params: { scope: AgentScope; name: string },
   ): ValidationResult {
-    const source = params.scope === "global" ? "user" : "project";
+    const source = params.scope === "bundled" ? "system" : params.scope === "global" ? "user" : "project";
     if (!AGENT_NAME_PATTERN.test(params.name)) {
       return {
         valid: false,
@@ -212,6 +214,14 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
     }
     if (params.scope === "global" && fs.existsSync(projectPath)) {
       addDiagnostic(diagnostics, "warning", "shadowed_by_project", `Global agent is shadowed in this project by ${projectPath}`);
+    }
+    if (params.scope === "bundled") {
+      if (fs.existsSync(globalPath)) {
+        addDiagnostic(diagnostics, "warning", "shadowed_by_global", `Bundled agent is shadowed by ${globalPath}`);
+      }
+      if (fs.existsSync(projectPath)) {
+        addDiagnostic(diagnostics, "warning", "shadowed_by_project", `Bundled agent is shadowed in this project by ${projectPath}`);
+      }
     }
 
     const result: ValidationResult = {

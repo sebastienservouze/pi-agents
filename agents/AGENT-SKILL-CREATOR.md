@@ -7,8 +7,8 @@ tools:
   - edit
   - bash
   - ls
-  - fffind
-  - ffgrep
+  - find
+  - grep
   - agent_capabilities
   - skill_validate
   - skill_save

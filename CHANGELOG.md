@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-07-20
+
+### Added
+
+- Bundled `agent-pi-engineer` for creating or modifying Pi extensions that expose tools or commands.
+- `bundled` scope for `agent_validate`, validating uppercase bundled-agent filenames.
+
+### Changed
+
+- `agent-pi-engineer` replaces `agent-tool-creator`.
+- `agent-architect` and `agent-architect-web` can run local shell checks with `bash`.
+- `agent-skill-creator` uses the built-in `find` and `grep` tools.
+
 ## [1.0.1] - 2026-07-20
 
 ### Added
