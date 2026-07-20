@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,16 +19,16 @@ for (const name of ["registry", "architect-tools"]) {
 const { registerArchitectTools } = await import(pathToFileURL(join(compiled, "architect-tools.js")).href);
 rmSync(compiled, { recursive: true, force: true });
 
-const markdown = (description: string) => `---
+const markdown = `---
 name: reviewer
-description: ${description}
+description: Reviews code
 tools: [read]
 ---
 
 Review the code.
 `;
 
-function harness(cwd: string, confirm: () => Promise<boolean> = async () => true) {
+function harness(cwd: string) {
   const tools = new Map<string, any>();
   const pi = {
     on() {},
@@ -40,8 +40,6 @@ function harness(cwd: string, confirm: () => Promise<boolean> = async () => true
   registerArchitectTools(pi as any);
   const ctx = {
     cwd,
-    hasUI: true,
-    ui: { confirm },
     modelRegistry: {
       getAll() { return []; },
       find() { return undefined; },
@@ -53,53 +51,41 @@ function harness(cwd: string, confirm: () => Promise<boolean> = async () => true
   return { tools, execute };
 }
 
-test("validates and saves a staged project agent without retransmitting Markdown", async () => {
+test("validates a project agent written to its final path", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-agents-architect-"));
-  const draft = join(cwd, ".pi", "agents", ".drafts", "reviewer.md");
   const target = join(cwd, ".pi", "agents", "reviewer.md");
-  mkdirSync(join(cwd, ".pi", "agents", ".drafts"), { recursive: true });
-  writeFileSync(draft, markdown("First version"));
+  mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+  writeFileSync(target, markdown);
 
   try {
     const { tools, execute } = harness(cwd);
-    assert.deepEqual(Object.keys(tools.get("agent_save").parameters.properties).sort(), ["name", "scope"]);
+    assert.equal(tools.has("agent_save"), false);
 
     const validation = await execute("agent_validate", { scope: "project", name: "reviewer" });
     assert.equal(validation.details.valid, true);
-    assert.equal(validation.details.draftPath, draft);
-
-    const created = await execute("agent_save", { scope: "project", name: "reviewer" });
-    assert.equal(created.details.verified, true);
-    assert.equal(readFileSync(target, "utf8"), markdown("First version"));
-    assert.equal(existsSync(draft), false);
-
-    writeFileSync(draft, markdown("Second version"));
-    const overwritten = await execute("agent_save", { scope: "project", name: "reviewer" });
-    assert.equal(overwritten.details.verified, true);
-    assert.equal(readFileSync(target, "utf8"), markdown("Second version"));
-    assert.equal(existsSync(draft), false);
+    assert.equal(validation.details.targetPath, target);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
-test("rejects missing and symlinked drafts", async () => {
+test("rejects missing and symlinked final agents", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-agents-architect-"));
-  const drafts = join(cwd, ".pi", "agents", ".drafts");
-  mkdirSync(drafts, { recursive: true });
+  const agents = join(cwd, ".pi", "agents");
+  mkdirSync(agents, { recursive: true });
 
   try {
     const { execute } = harness(cwd);
-    const missing = await execute("agent_save", { scope: "project", name: "reviewer" });
+    const missing = await execute("agent_validate", { scope: "project", name: "reviewer" });
     assert.equal(missing.isError, true);
-    assert.match(missing.content[0].text, /draft_missing/);
+    assert.match(missing.content[0].text, /agent_missing/);
 
     const source = join(cwd, "source.md");
-    writeFileSync(source, markdown("Symlink"));
-    symlinkSync(source, join(drafts, "reviewer.md"));
+    writeFileSync(source, markdown);
+    symlinkSync(source, join(agents, "reviewer.md"));
     const symlinked = await execute("agent_validate", { scope: "project", name: "reviewer" });
     assert.equal(symlinked.isError, true);
-    assert.match(symlinked.content[0].text, /symlink_draft/);
+    assert.match(symlinked.content[0].text, /symlink_agent/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

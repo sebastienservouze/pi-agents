@@ -1,10 +1,9 @@
 /** Deterministic tools used by agent-architect. */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
-import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   AGENT_NAME_PATTERN,
   DEFAULT_AGENT_TOOLS,
@@ -17,7 +16,7 @@ import {
 const ScopeSchema = Type.Union([Type.Literal("global"), Type.Literal("project")]);
 const CandidateSchema = Type.Object({
   scope: ScopeSchema,
-  name: Type.String({ description: "Agent name and draft filename without .md" }),
+  name: Type.String({ description: "Agent name and filename without .md" }),
 });
 
 interface SkillInfo {
@@ -30,10 +29,7 @@ interface SkillInfo {
 interface ValidationResult {
   valid: boolean;
   diagnostics: AgentDiagnostic[];
-  draftPath: string;
   targetPath: string;
-  existing: boolean;
-  diff?: string;
   normalized?: {
     name: string;
     description: string;
@@ -45,51 +41,10 @@ interface ValidationResult {
   };
 }
 
-function sha256(content: string): string {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-/** Compact single-hunk diff; enough for short agent Markdown files. */
-function unifiedDiff(filePath: string, oldContent: string, newContent: string): string {
-  const oldLines = oldContent.split("\n");
-  const newLines = newContent.split("\n");
-  let prefix = 0;
-  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
-  let suffix = 0;
-  while (
-    suffix < oldLines.length - prefix &&
-    suffix < newLines.length - prefix &&
-    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) suffix++;
-
-  const contextStart = Math.max(0, prefix - 3);
-  const oldEnd = Math.min(oldLines.length, oldLines.length - suffix + 3);
-  const newEnd = Math.min(newLines.length, newLines.length - suffix + 3);
-  const before = oldLines.slice(contextStart, prefix).map((line) => ` ${line}`);
-  const removed = oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`);
-  const added = newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`);
-  const after = oldLines.slice(oldLines.length - suffix, oldEnd).map((line) => ` ${line}`);
-  const oldCount = oldEnd - contextStart;
-  const newCount = newEnd - contextStart;
-  return [
-    `--- ${filePath}`,
-    `+++ ${filePath}`,
-    `@@ -${contextStart + 1},${oldCount} +${contextStart + 1},${newCount} @@`,
-    ...before,
-    ...removed,
-    ...added,
-    ...after,
-  ].join("\n");
-}
-
-function agentPaths(cwd: string, scope: "global" | "project", name: string): { draftPath: string; targetPath: string } {
+function agentPath(cwd: string, scope: "global" | "project", name: string): string {
   if (!AGENT_NAME_PATTERN.test(name)) throw new Error("Invalid agent name");
   const dirs = getAgentDirectories(cwd);
-  const dir = scope === "global" ? dirs.user : dirs.project;
-  return {
-    draftPath: path.join(dir, ".drafts", `${name}.md`),
-    targetPath: path.join(dir, `${name}.md`),
-  };
+  return path.join(scope === "global" ? dirs.user : dirs.project, `${name}.md`);
 }
 
 function addDiagnostic(
@@ -109,16 +64,11 @@ function resolveModel(ctx: ExtensionContext, spec: string) {
 }
 
 function formatValidation(result: ValidationResult): string {
-  const lines = [
-    `${result.valid ? "VALID" : "INVALID"}: ${result.draftPath}`,
-    `Target: ${result.targetPath}`,
-    result.existing ? "Target already exists." : "Target is new.",
-  ];
+  const lines = [`${result.valid ? "VALID" : "INVALID"}: ${result.targetPath}`];
   for (const diagnostic of result.diagnostics) {
     lines.push(`${diagnostic.severity === "error" ? "ERROR" : "WARNING"} [${diagnostic.code}]: ${diagnostic.message}`);
   }
   if (!result.diagnostics.length) lines.push("No diagnostics.");
-  if (result.diff) lines.push(`\nProposed diff:\n${result.diff}`);
   return lines.join("\n");
 }
 
@@ -128,7 +78,7 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
 
   // Keep these specialized tools out of normal sessions. Activating an agent
   // whose frontmatter lists them re-enables them through pi-agents' allow-list.
-  const architectToolNames = new Set(["agent_validate", "agent_capabilities", "agent_save"]);
+  const architectToolNames = new Set(["agent_validate", "agent_capabilities"]);
   pi.on("session_start", () => {
     try {
       pi.setActiveTools(pi.getActiveTools().filter((name) => !architectToolNames.has(name)));
@@ -167,30 +117,28 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
       return {
         valid: false,
         diagnostics: [{ severity: "error", code: "invalid_target_name", message: `Target name must match ${AGENT_NAME_PATTERN}` }],
-        draftPath: "(invalid draft name)",
-        targetPath: "(invalid target name)",
-        existing: false,
+        targetPath: "(invalid agent name)",
       };
     }
 
-    const { draftPath, targetPath: filePath } = agentPaths(ctx.cwd, params.scope, params.name);
+    const filePath = agentPath(ctx.cwd, params.scope, params.name);
     let markdown = "";
-    const draftDiagnostics: AgentDiagnostic[] = [];
+    const fileDiagnostics: AgentDiagnostic[] = [];
     try {
-      if (!fs.existsSync(draftPath)) {
-        addDiagnostic(draftDiagnostics, "error", "draft_missing", `Draft does not exist: ${draftPath}`);
-      } else if (fs.lstatSync(draftPath).isSymbolicLink()) {
-        addDiagnostic(draftDiagnostics, "error", "symlink_draft", "Refusing to read an agent draft symlink");
-      } else if (!fs.lstatSync(draftPath).isFile()) {
-        addDiagnostic(draftDiagnostics, "error", "invalid_draft", "Agent draft is not a regular file");
+      if (!fs.existsSync(filePath)) {
+        addDiagnostic(fileDiagnostics, "error", "agent_missing", `Agent does not exist: ${filePath}`);
+      } else if (fs.lstatSync(filePath).isSymbolicLink()) {
+        addDiagnostic(fileDiagnostics, "error", "symlink_agent", "Refusing to read an agent file symlink");
+      } else if (!fs.lstatSync(filePath).isFile()) {
+        addDiagnostic(fileDiagnostics, "error", "invalid_agent", "Agent is not a regular file");
       } else {
-        markdown = fs.readFileSync(draftPath, "utf-8");
+        markdown = fs.readFileSync(filePath, "utf-8");
       }
     } catch (error) {
-      addDiagnostic(draftDiagnostics, "error", "unreadable_draft", error instanceof Error ? error.message : String(error));
+      addDiagnostic(fileDiagnostics, "error", "unreadable_agent", error instanceof Error ? error.message : String(error));
     }
-    const parsed = parseAgentMarkdown(markdown, source, draftPath);
-    const diagnostics = [...draftDiagnostics, ...parsed.diagnostics];
+    const parsed = parseAgentMarkdown(markdown, source, filePath);
+    const diagnostics = [...fileDiagnostics, ...parsed.diagnostics];
     const agent = parsed.agent;
     if (agent) {
       const configuredTools = new Set(pi.getAllTools().map((tool) => tool.name));
@@ -266,36 +214,11 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
       addDiagnostic(diagnostics, "warning", "shadowed_by_project", `Global agent is shadowed in this project by ${projectPath}`);
     }
 
-    let existingContent: string | undefined;
-    if (fs.existsSync(filePath)) {
-      try {
-        if (fs.lstatSync(filePath).isSymbolicLink()) {
-          addDiagnostic(diagnostics, "error", "symlink_target", "Refusing to overwrite an agent file symlink");
-        } else {
-          existingContent = fs.readFileSync(filePath, "utf-8");
-        }
-      } catch (error) {
-        addDiagnostic(
-          diagnostics,
-          "error",
-          "unreadable_target",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-
     const result: ValidationResult = {
       valid: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
       diagnostics,
-      draftPath,
       targetPath: filePath,
-      existing: existingContent !== undefined,
     };
-    if (existingContent !== undefined) {
-      if (existingContent !== markdown) {
-        result.diff = unifiedDiff(filePath, existingContent, markdown);
-      }
-    }
     if (agent) {
       result.normalized = {
         name: agent.name,
@@ -313,24 +236,20 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "agent_validate",
     label: "Validate agent",
-    description: "Validates the staged .drafts/<name>.md agent definition without writing files. Use for an explicit dry run or after editing a rejected draft; agent_save validates automatically.",
-    promptSnippet: "Validate a staged agent draft without saving it",
+    description: "Validates a saved global or project agent definition without writing files.",
+    promptSnippet: "Validate an agent after writing or editing it",
     promptGuidelines: [
-      "Use agent_validate only for an explicit dry run or to check corrections after a validation failure; agent_save validates drafts itself.",
-      "Treat agent_validate errors as blocking and correct the draft with edit.",
+      "Use agent_validate after writing an agent or correcting a validation failure.",
+      "Treat agent_validate errors as blocking and correct the agent with edit.",
     ],
     parameters: CandidateSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const paths = AGENT_NAME_PATTERN.test(params.name) ? agentPaths(ctx.cwd, params.scope, params.name) : null;
-      const run = async () => {
-        const result = validate(ctx, params);
-        return {
-          content: [{ type: "text" as const, text: formatValidation(result) }],
-          details: result,
-          isError: !result.valid,
-        };
+      const result = validate(ctx, params);
+      return {
+        content: [{ type: "text" as const, text: formatValidation(result) }],
+        details: result,
+        isError: !result.valid,
       };
-      return paths ? withFileMutationQueue(paths.draftPath, run) : run();
     },
   });
 
@@ -412,135 +331,6 @@ export function registerArchitectTools(pi: ExtensionAPI): void {
       }
 
       return { content: [{ type: "text", text: sections.join("\n\n") }], details };
-    },
-  });
-
-  pi.registerTool({
-    name: "agent_save",
-    label: "Save agent",
-    description: "Validates and atomically saves the staged .drafts/<name>.md agent to its authorized global or project target.",
-    promptSnippet: "Validate and save a staged agent draft to its exact authorized path",
-    promptGuidelines: [
-      "Use agent_save directly after writing the final draft; do not call agent_validate first unless a dry run was requested.",
-      "Never call agent_save in parallel with write or edit; wait until the draft mutation completes.",
-      "agent_save requires a final interactive confirmation before every write.",
-    ],
-    parameters: CandidateSchema,
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!AGENT_NAME_PATTERN.test(params.name)) {
-        const result = validate(ctx, params);
-        return {
-          content: [{ type: "text", text: `Agent not saved.\n${formatValidation(result)}` }],
-          details: result,
-          isError: true,
-        };
-      }
-
-      const paths = agentPaths(ctx.cwd, params.scope, params.name);
-      return withFileMutationQueue(paths.draftPath, () => withFileMutationQueue(paths.targetPath, async () => {
-      const result = validate(ctx, params);
-      if (!result.valid) {
-        return {
-          content: [{ type: "text", text: `Agent not saved.\n${formatValidation(result)}` }],
-          details: result,
-          isError: true,
-        };
-      }
-
-      if (result.existing && !result.diff) {
-        return {
-          content: [{ type: "text", text: `No changes: ${result.targetPath}` }],
-          details: result,
-        };
-      }
-      if (!ctx.hasUI) {
-        return {
-          content: [{ type: "text", text: "Agent not saved: every write requires interactive confirmation." }],
-          details: result,
-          isError: true,
-        };
-      }
-      const draftContent = fs.readFileSync(result.draftPath, "utf-8");
-      const draftSha256 = sha256(draftContent);
-      const targetSha256 = result.existing ? sha256(fs.readFileSync(result.targetPath, "utf-8")) : undefined;
-      const warnings = result.diagnostics
-        .filter((diagnostic) => diagnostic.severity === "warning")
-        .map((diagnostic) => `WARNING [${diagnostic.code}]: ${diagnostic.message}`);
-      const approved = await ctx.ui.confirm(
-        `${result.existing ? "Overwrite" : "Create"} agent "${params.name}"?`,
-        [
-          result.draftPath,
-          `→ ${result.targetPath}`,
-          ...warnings,
-          ...(result.existing
-            ? ["", result.diff ?? ""]
-            : [
-                result.normalized?.description ?? "",
-                `Tools: ${result.normalized?.tools?.join(", ") || "defaults"}`,
-                `Model: ${result.normalized?.model ?? "inherited"}`,
-                `Thinking: ${result.normalized?.thinkingLevel ?? "inherited"}`,
-              ]),
-        ].join("\n"),
-        { signal },
-      );
-      if (!approved) {
-        return {
-          content: [{ type: "text", text: "Agent not saved: write declined by user." }],
-          details: result,
-          isError: true,
-        };
-      }
-      if (!fs.existsSync(result.draftPath) || fs.lstatSync(result.draftPath).isSymbolicLink() || sha256(fs.readFileSync(result.draftPath, "utf-8")) !== draftSha256) {
-        return {
-          content: [{ type: "text", text: "Agent not saved: draft changed after confirmation; save again." }],
-          details: result,
-          isError: true,
-        };
-      }
-      if (result.existing) {
-        if (!fs.existsSync(result.targetPath) || fs.lstatSync(result.targetPath).isSymbolicLink()) {
-          return {
-            content: [{ type: "text", text: "Agent not saved: target changed after confirmation; save again." }],
-            details: result,
-            isError: true,
-          };
-        }
-        const current = fs.readFileSync(result.targetPath, "utf-8");
-        if (sha256(current) !== targetSha256) {
-          return {
-            content: [{ type: "text", text: "Agent not saved: target changed after confirmation; save again." }],
-            details: result,
-            isError: true,
-          };
-        }
-      } else if (fs.existsSync(result.targetPath)) {
-        return {
-          content: [{ type: "text", text: "Agent not saved: target appeared after confirmation; validate again." }],
-          details: result,
-          isError: true,
-        };
-      }
-
-      const dir = path.dirname(result.targetPath);
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const tempPath = path.join(dir, `.${params.name}.${crypto.randomUUID()}.tmp`);
-      try {
-        const mode = result.existing ? fs.statSync(result.targetPath).mode & 0o777 : 0o600;
-        fs.writeFileSync(tempPath, draftContent, { encoding: "utf-8", flag: "wx", mode });
-        fs.renameSync(tempPath, result.targetPath);
-      } finally {
-        try { fs.unlinkSync(tempPath); } catch { /* rename succeeded or cleanup is best-effort */ }
-      }
-      const savedContent = fs.readFileSync(result.targetPath, "utf-8");
-      const savedSha256 = sha256(savedContent);
-      if (savedSha256 !== draftSha256) throw new Error(`Post-write verification failed: ${result.targetPath}`);
-      fs.unlinkSync(result.draftPath);
-
-      return {
-        content: [{ type: "text", text: `Agent saved and verified: ${result.targetPath}\nDraft removed: ${result.draftPath}` }],
-        details: { ...result, saved: true, verified: true },
-      };
-      }));
     },
   });
 }

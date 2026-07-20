@@ -44,6 +44,18 @@ export async function activateAgent(
     return;
   }
 
+  if (agent.name === "agent-architect-web") {
+    const available = new Set(pi.getAllTools().map((tool) => tool.name));
+    const missing = ["web_search", "fetch_content", "get_search_content"].filter((name) => !available.has(name));
+    if (missing.length) {
+      ctx.ui.notify(
+        `Agent "${agent.name}" requires pi-web-access (missing: ${missing.join(", ")}). Install it with "pi install npm:pi-web-access", then run /reload; or use /agent agent-architect.`,
+        "error",
+      );
+      return;
+    }
+  }
+
   // Apply settings (keeping the original restore point on a first switch),
   // record the state, and persist it so it survives a reload.
   const state = await applyAgent(pi, ctx, agent, getState());

@@ -66,6 +66,7 @@ test("discovers project, global and system agents with precedence", () => {
     assert.equal(agents.filter((item) => item.name === "agent-session-reviewer").length, 1);
     assert.equal(agents.find((item) => item.name === "agent-architect")?.source, "system");
     assert.equal(agents.find((item) => item.name === "agent-architect")?.model, undefined);
+    assert.equal(agents.find((item) => item.name === "agent-architect-web")?.source, "system");
   } finally {
     if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousDir;

@@ -8,7 +8,8 @@ A specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-work
 
 | System agent | Use it when you want to… |
 |---|---|
-| `agent-architect` | Decide whether a need calls for a prompt, skill, tool, or agent, then create an agent when justified. |
+| `agent-architect` | Decide whether a need calls for a prompt, skill, tool, or agent, then create an agent when justified — no web access required. |
+| `agent-architect-web` | Same role, with web research when external or unstable information matters; requires `pi-web-access`. |
 | `agent-skill-creator` | Compare existing public skills, create or adapt a standards-compliant skill, and install it safely. |
 | `agent-tool-creator` | Implement the smallest reliable pi tool from an approved contract or a direct request. |
 | `agent-session-reviewer` | Audit a session, including decision quality, tool usage, missed parallelism, and opportunities for agents, skills, or tools. |
@@ -24,9 +25,9 @@ The extension supports two execution modes:
 pi install npm:@nerisma/pi-agents
 ```
 
-The four system agents remain in the installed `pi-agents` package and are read when agents are discovered. They are not copied into `~/.pi/agent/agents/`. Project agents override global agents with the same name, and global agents override system agents.
+The five system agents remain in the installed `pi-agents` package and are read when agents are discovered. They are not copied into `~/.pi/agent/agents/`. Project agents override global agents with the same name, and global agents override system agents.
 
-Reload pi after installation:
+Reload pi after installation so its extensions and system agents are discovered:
 
 ```text
 /reload
@@ -48,6 +49,7 @@ Or activate a role directly:
 
 ```text
 /agent agent-architect
+/agent agent-architect-web
 /agent agent-skill-creator
 /agent agent-tool-creator
 /agent agent-session-reviewer
@@ -66,7 +68,23 @@ Return to the normal pi prompt with:
 Create a project-local agent that reviews database migrations without modifying files.
 ```
 
-The architect first checks existing capabilities and challenges whether a new agent is needed. If it is, it proposes the prompt, permissions, scope, and final path before writing anything. The final save shows a diff and requires confirmation.
+The architect first checks existing capabilities and challenges whether a new agent is needed. If it is, it proposes the prompt, permissions, scope, and final path before writing it. It then validates the saved file and corrects it only if validation fails.
+
+### Choose an architect
+
+`agent-architect` is the offline default. It works with pi alone, including when `pi-fff` replaces pi's native `find` and `grep` tools.
+
+Use `agent-architect-web` only when research on external or unstable information is needed. Install its required extension, then reload pi:
+
+```bash
+pi install npm:pi-web-access
+```
+
+```text
+/reload
+```
+
+If `pi-web-access` is absent, activating `agent-architect-web` is refused with this installation command and a reminder to use `/agent agent-architect` instead.
 
 ### Create or reuse a skill
 
@@ -109,21 +127,7 @@ The reviewer follows persisted branch relationships instead of treating JSONL as
 
 Agent definitions declare their tools explicitly. While an agent is active, pi-agents reapplies that allow-list to the request sent to the provider, including tools injected by other extensions.
 
-Creation workflows use the same staged-save pattern:
-
-```text
-inspect existing capabilities
-→ agree on a design
-→ write a non-discovered draft
-→ validate
-→ show warnings and diff
-→ ask for confirmation
-→ save atomically
-→ verify the written content
-→ remove the draft
-```
-
-The save tools derive all paths from a validated scope and name, reject symlinks, detect changes made during confirmation, and never accept arbitrary destination paths. Skill updates preserve target files that are absent from the draft; this version does not delete skill resources.
+Agent creation writes the approved definition directly to its final path, then validates it and corrects only validation errors. Skill creation keeps its staged-save workflow because it manages a directory and preserves existing resources omitted from its draft.
 
 ## Everyday commands
 
@@ -157,13 +161,12 @@ Specialized tools are registered globally but kept inactive unless an agent expl
 ### Capability and agent creation
 
 - `agent_capabilities` lists loaded tools, authenticated models, skills, and agents. Use it instead of inventing capability names.
-- `agent_validate scope=<global|project> name=<name>` validates an agent draft on request.
-- `agent_save scope=<global|project> name=<name>` validates, confirms, atomically saves, and verifies an agent draft.
+- `agent_validate scope=<global|project> name=<name>` validates an agent written to its final path.
 
-Agent draft locations:
+Agent locations:
 
-- project: `<cwd>/.pi/agents/.drafts/<name>.md`
-- global: `~/.pi/agent/agents/.drafts/<name>.md`
+- project: `<cwd>/.pi/agents/<name>.md`
+- global: `~/.pi/agent/agents/<name>.md`
 
 ### Skill creation
 
