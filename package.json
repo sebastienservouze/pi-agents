@@ -1,6 +1,6 @@
 {
   "name": "@nerisma/pi-agents",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Specialized agent system for pi: task delegation, activation/deactivation, and system prompt injection via .md files.",
   "keywords": [
     "pi-package",
