@@ -1,15 +1,18 @@
-```text
+<div align="center"><pre>
 ██████╗ ██╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗███████╗
 ██╔══██╗██║      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝██╔════╝
 ██████╔╝██║█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ███████╗
 ██╔═══╝ ██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ╚════██║
 ██║     ██║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ███████║
 ╚═╝     ╚═╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
-```
+                                                                     
+</pre></div>
 
-# @nerisma/pi-agents
+<div align="center">
 
-A specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+> A specialized-agent system for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+
+</div>
 
 `pi-agents` lets you switch from a general coding assistant to a focused role with a dedicated prompt, a least-privilege tool set, optional skills, and an appropriate model. It also provides safe workflows for creating agents, tools, and Agent Skills, plus evidence-based reviews of persisted sessions.
 
