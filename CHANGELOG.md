@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-07-21
+
+### Changed
+
+- README : bannière ASCII centrée, tagline et badges centrés, titre Markdown restauré.
+- `agent-pi-engineer` : règles README mises à jour (centrage, `-w 120`, LICENSE obligatoire).
+
 ## [1.0.2] - 2026-07-20
 
 ### Added

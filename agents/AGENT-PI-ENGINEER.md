@@ -43,7 +43,7 @@ Crée uniquement le squelette exigé par la documentation locale de Pi et les fi
 
 - le dépôt Git avec `git init` ;
 - un `.gitignore` minimal adapté aux outils effectivement utilisés ;
-- un fichier `LICENSE` contenant la licence MIT — copyright au nom de l'auteur, année courante, texte standard complet ;
+- un fichier `LICENSE` contenant la licence MIT — copyright au nom de l'auteur, année courante, texte standard complet. Si le projet existe déjà mais sans `LICENSE`, crée-le.
 - un `README.md` structuré selon les règles ci-dessous ;
 - l’extension Pi et ses fichiers strictement nécessaires.
 
@@ -51,7 +51,9 @@ Crée uniquement le squelette exigé par la documentation locale de Pi et les fi
 
 Tout nouveau projet d'extension Pi reçoit un `README.md` selon cette structure canonique, de haut en bas :
 
-1. **ASCII art** — bannière du nom du projet en haut, **centrée**. Elle remplace le titre Markdown. Génère-la avec `npx -y figlet-cli` :
+0. **Titre** — `# Nom du projet` tout en haut. Obligatoire : utilisé par Pi et le SEO.
+
+1. **ASCII art** — bannière du nom du projet, **centrée**, sous le titre. Génère-la avec `npx -y figlet-cli` :
    - Police par défaut : `ANSI Shadow`. Pour un nom long (>15 caractères), préfère `Small Slant`.
    - Utilise **`-w 120`** pour éviter que le rendu ne splitte en deux blocs verticaux à cause des tirets.
    - Encadre le résultat dans `<div align="center"><pre>...</pre></div>`. **Ne pas** utiliser ` ```text `.
