@@ -51,31 +51,34 @@ Crée uniquement le squelette exigé par la documentation locale de Pi et les fi
 
 Tout nouveau projet d'extension Pi reçoit un `README.md` selon cette structure canonique, de haut en bas :
 
-1. **ASCII art** — bannière du nom du projet. Génère-la avec `npx -y figlet-cli` :
-   - Police par défaut : `ANSI Shadow` (large, lisible, blocs Unicode). Pour un nom long (>15 caractères), préfère `Small Slant` ou `Graceful`.
-   - Encadre le résultat dans ` ```text ... ``` `, supprime les lignes vides en excès.
-   - Exemple : `npx -y figlet-cli -f "ANSI Shadow" "mon-projet"`
+1. **ASCII art** — bannière du nom du projet en haut, **centrée**. Elle remplace le titre Markdown. Génère-la avec `npx -y figlet-cli` :
+   - Police par défaut : `ANSI Shadow`. Pour un nom long (>15 caractères), préfère `Small Slant`.
+   - Utilise **`-w 120`** pour éviter que le rendu ne splitte en deux blocs verticaux à cause des tirets.
+   - Encadre le résultat dans `<div align="center"><pre>...</pre></div>`. **Ne pas** utiliser ` ```text `.
+   - **Conserve les espaces de fin de ligne** (trailing spaces) produits par figlet — ils font partie de l'alignement visuel.
+   - Exemple : `npx -y figlet-cli -f "ANSI Shadow" -w 120 "mon-projet"`
 
-2. **Badges** — deux badges shields.io sur une ligne, cliquables :
-   - Version npm : `[![npm](https://img.shields.io/npm/v/<package>?style=flat&label=npm)](https://www.npmjs.com/package/<package>)`
-   - Licence : `[![license](https://img.shields.io/badge/license-MIT-blue?style=flat)](./LICENSE)` — badge statique pointant vers le fichier local, fonctionne avant publication GitHub.
+2. **Tagline + badges** — les deux sont **centrés horizontalement** dans un `<div align="center">`, la tagline en premier, les badges en dessous :
+   - Tagline : une phrase en blockquote `>` qui dit ce que fait le projet et pour qui, en une ligne.
+   - Badges (deux sur une ligne, optionnels) :
+     - Version npm : `[![npm](https://img.shields.io/npm/v/<package>?style=flat&label=npm)](https://www.npmjs.com/package/<package>)`
+     - Licence : `[![license](https://img.shields.io/badge/license-MIT-blue?style=flat)](./LICENSE)` — badge statique pointant vers le fichier local, fonctionne avant publication GitHub.
+   - Fermer avec `</div>`.
 
-3. **Tagline** — une phrase en blockquote `>` qui dit ce que fait le projet et pour qui, en une ligne.
+3. **Install** — commandes exactes copiables : `pi install npm:<package>` puis `/reload`.
 
-4. **Install** — commandes exactes copiables : `pi install npm:<package>` puis `/reload`.
+4. **Usage** — exemple minimal avec entrée et sortie visible. Montre ce que l'utilisateur tape et ce qu'il obtient.
 
-5. **Usage** — exemple minimal avec entrée et sortie visible. Montre ce que l'utilisateur tape et ce qu'il obtient.
+5. **Configuration** — variables d'environnement ou settings concernés, avec défaut et description. Utilise un tableau si plus de deux variables.
 
-6. **Configuration** — variables d'environnement ou settings concernés, avec défaut et description. Utilise un tableau si plus de deux variables.
+6. **How it works** — (optionnel) transparence sur le fonctionnement interne si c'est utile à la compréhension.
 
-7. **How it works** — (optionnel) transparence sur le fonctionnement interne si c'est utile à la compréhension.
+7. **Development** — commandes pour tester et builder : `npm test`, `npm run typecheck`, etc.
 
-8. **Development** — commandes pour tester et builder : `npm test`, `npm run typecheck`, etc.
-
-9. **License** — une ligne : `MIT — see [LICENSE](./LICENSE).`
+8. **License** — une ligne : `MIT — see [LICENSE](./LICENSE).`
 
 Respecte ces contraintes :
-- L'écran du haut (ASCII + badges + tagline + install) doit permettre de comprendre et lancer le projet en 30 secondes, sans scroller.
+- L'écran du haut (ASCII + tagline + badges + install) doit permettre de comprendre et lancer le projet en 30 secondes, sans scroller.
 - Pas de table des matières, pas de sections spéculatives (roadmap, FAQ, contrib) sauf demande explicite.
 - Si une section n'a pas de contenu pertinent, omet-la plutôt que d'écrire du remplissage.
 
